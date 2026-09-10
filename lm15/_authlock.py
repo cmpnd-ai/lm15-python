@@ -36,7 +36,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-from .errors import LockTimeoutError
+from .errors import LockTimeoutError, UnsupportedFeatureError
 
 _DEFAULT_LOCK_TIMEOUT_S = 60.0
 _LOCK_POLL_INTERVAL_S = 0.05
@@ -73,10 +73,18 @@ def lock_path_for(path: Path) -> Path:
     return _lock_dir() / f"{digest}.lock"
 
 
+# Chosen by which primitive the platform actually has, not by `os.name`: WASI reports
+# "posix" and ships no fcntl, so a name test picks an implementation that cannot import.
 try:
     import fcntl
-except ImportError:  # pragma: no cover - Pyodide (and any POSIX build without it)
-    fcntl = None  # type: ignore[assignment]
+except ImportError:  # pragma: no cover - Windows, and POSIX-ish builds without fcntl
+    fcntl = None
+
+try:
+    import msvcrt
+except ImportError:  # pragma: no cover - every non-Windows platform
+    msvcrt = None
+
 
 if fcntl is not None:
 
@@ -90,19 +98,7 @@ if fcntl is not None:
     def _unlock(fd: int) -> None:
         fcntl.flock(fd, fcntl.LOCK_UN)
 
-elif os.name == "posix":  # pragma: no cover - Pyodide: the lock is asked for, not merely imported
-
-    def _try_lock(fd: int) -> bool:
-        raise CredentialLockTimeout(
-            "shared credential locking needs fcntl, which this Python (Pyodide?) does not have; "
-            "pass an explicit credential instead of a stored login"
-        )
-
-    def _unlock(fd: int) -> None:
-        return None
-
-else:  # pragma: no cover - exercised only on Windows
-    import msvcrt
+elif msvcrt is not None:  # pragma: no cover - exercised only on Windows
 
     def _try_lock(fd: int) -> bool:
         try:
@@ -116,6 +112,18 @@ else:  # pragma: no cover - exercised only on Windows
             msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
         except OSError:
             pass
+
+else:  # pragma: no cover - platforms with neither primitive, such as WASI
+
+    def _try_lock(fd: int) -> bool:
+        raise UnsupportedFeatureError(
+            "This platform provides no advisory file locking (neither fcntl nor msvcrt), "
+            "so lm15 cannot serialize credential refreshes against other processes. "
+            "Reading credentials still works; refreshing them from here does not."
+        )
+
+    def _unlock(fd: int) -> None:
+        return None
 
 
 @contextmanager
