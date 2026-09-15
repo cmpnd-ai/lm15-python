@@ -280,12 +280,12 @@ def test_stop_cutter_catches_a_sequence_split_into_pieces_shorter_than_itself() 
     # "ST" + "OP": the first chunk is shorter than the withheld tail; the
     # cutter once released "S" and missed the word.
     c = _StopCutter(("STOP",))
-    assert c.feed(0, "ST") == "" and c.feed(0, "OP") == "" and c.cut
+    assert c.feed(0, "ST") == [] and c.feed(0, "OP") == [] and c.cut
     c = _StopCutter(("STOP",))
-    assert [c.feed(0, piece) for piece in ("S", "T", "O", "P")] == ["", "", "", ""] and c.cut
+    assert [c.feed(0, piece) for piece in ("S", "T", "O", "P")] == [[], [], [], []] and c.cut
     c = _StopCutter(("STOP",))
-    assert [c.feed(0, piece) for piece in ("a", "b", "c", "d")] == ["", "", "", "a"] and not c.cut
-    assert c.flush() == [(0, "bcd")]
+    assert [c.feed(0, piece) for piece in ("a", "b", "c", "d")] == [[], [], [], [(0, "a")]] and not c.cut
+    assert c.flush() == [(0, "b"), (0, "c"), (0, "d")]
 
 
 def test_stream_cuts_when_the_stop_word_arrives_letter_by_letter() -> None:
@@ -363,3 +363,58 @@ def test_client_side_stop_reason_makes_no_billing_promise() -> None:
     lm = OpenAILM(api_key="k")
     (a,) = lm.plan(Request(model="gpt-5", messages=(Message.user("hi"),), config=Config(stop=("END",))))
     assert "not reported" in a.reason and "billed" not in a.reason.replace("and billing, is its own behaviour", "")
+
+
+# ─── greptile on dspy#10409: four more, each pinned ──────────────────
+
+def test_stop_sequence_spanning_two_text_parts_is_cut_on_complete() -> None:
+    from lm15.result import apply_client_side_stop
+
+    r = Response(id=None, model="m", finish_reason="length", usage=Usage(),
+                 message=Message.assistant((TextPart(text="alpha S"), TextPart(text="TOP beta"), TextPart(text="gamma"))))
+    cut = apply_client_side_stop(r, ("STOP",))
+    assert [p.text for p in cut.message.parts] == ["alpha "] and cut.finish_reason == "stop"
+
+
+def test_stop_sequence_spanning_two_text_parts_is_cut_on_stream() -> None:
+    from lm15.result import _StopCutter
+
+    c = _StopCutter(("STOP",))
+    out = c.feed(0, "alpha S") + c.feed(1, "TOP beta")
+    assert out == [(0, "alph"), (0, "a ")] and c.cut
+    # No hit: every piece is released under the part it came from.
+    c = _StopCutter(("STOP",))
+    out = c.feed(0, "a") + c.feed(1, "b") + c.feed(2, "c") + c.feed(3, "d") + c.flush()
+    assert out == [(0, "a"), (1, "b"), (2, "c"), (3, "d")] and not c.cut
+
+
+def test_dropped_schema_is_not_sent_on_a_server_that_ignores_it() -> None:
+    from tests._adapt import adapted
+
+    lm = LMRouter(RouterConfig(env={"DEEPSEEK_API_KEY": "d"})).lm("deepseek-anthropic:deepseek-v4-flash")
+    req = Request(model="deepseek-v4-flash", messages=(Message.user("x"),),
+                  config=Config(max_tokens=10, response_format={"type": "json_schema", "name": "x", "schema": {"type": "object"}}))
+    out = adapted(lm, req)
+    assert out["config.response_format"].action == "dropped"
+    assert "format" not in out["__body__"].get("output_config", {})  # dropped means not sent
+
+
+def test_cache_breakpoint_walk_back_is_recorded_once() -> None:
+    from lm15 import CacheConfig, OpenAIChatLM
+
+    req = Request(model="gpt-5.6-sol", messages=(Message.user("prefix"), Message.assistant("ok"), Message.user("q")),
+                  config=Config(cache=CacheConfig(prefix_until_index=1)))
+    for lm in (OpenAILM(api_key="k"), OpenAIChatLM(api_key="k")):
+        plan = lm.plan(req)
+        assert [a.field for a in plan] == ["config.cache.prefix_until_index"]
+
+
+def test_compat_guess_warning_never_prints_url_credentials() -> None:
+    import warnings
+
+    lm = OpenAILM(api_key="k", base_url="https://user:secret-token@openrouter.ai/api/v1?key=also-secret")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        lm.plan(Request(model="m", messages=(Message.user("hi"),)))  # the guess happens per request
+    text = " ".join(str(w.message) for w in caught if issubclass(w.category, DeprecationWarning))
+    assert "openrouter.ai" in text and "secret-token" not in text and "also-secret" not in text and "user" not in text
