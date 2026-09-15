@@ -1,5 +1,5 @@
 """
-Sync transport built on the stdlib `socket` + `ssl` modules.
+Sync transport built on the stdlib `socket` module.
 
 Design:
 
@@ -15,6 +15,9 @@ Design:
   socket, readable means the server sent EOF — so we drop it and open fresh.
 - If the server sent `Connection: close`, or the body is still outstanding
   when the response closes, the connection is closed rather than reused.
+- TLS lives in `_ssl.py`, which this module imports on the first https request
+  and not before.  That module needs the stdlib `ssl`; this one does not, so a
+  CPython build without `ssl` still carries plain HTTP through here.
 - Proxies: `proxy=` pins one explicitly; otherwise `trust_env=True` (default)
   honors HTTP_PROXY / HTTPS_PROXY / ALL_PROXY / NO_PROXY.  Plain-HTTP targets
   are forwarded absolute-URI; TLS targets are tunneled with CONNECT and the
@@ -30,7 +33,7 @@ import select
 import socket
 import threading
 import weakref
-from typing import Iterator
+from typing import TYPE_CHECKING, Iterator
 
 from ._exceptions import (
     ConnectError,
@@ -60,9 +63,11 @@ from ._limits import (
     read_timeout_hint,
 )
 from ._proxy import ProxyRoute, connect_payload, proxy_route_for, route_origin
-from ._ssl import SSLError, make_ssl_context
 from ._types import TransportRequest, TransportResponse
 from ._url import ParsedURL, parse_url
+
+if TYPE_CHECKING:
+    from ._ssl import TLS
 
 
 _READ_CHUNK = 64 * 1024
@@ -239,8 +244,8 @@ class StdlibTransport:
         self._ca_bundle = ca_bundle
         self._proxy = proxy
         self._trust_env = trust_env
-        self._ssl_ctx: ssl.SSLContext | None = None
-        self._ssl_lock = threading.Lock()
+        self._tls: TLS | None = None
+        self._tls_lock = threading.Lock()
         self._pool = _ConnectionPool(self._max_connections)
         self._closed = False
 
@@ -264,13 +269,15 @@ class StdlibTransport:
             trust_env=self._trust_env,
         )
 
-    def _get_ssl_ctx(self) -> ssl.SSLContext:
-        with self._ssl_lock:
-            if self._ssl_ctx is None:
-                self._ssl_ctx = make_ssl_context(
-                    verify=self._verify, ca_bundle=self._ca_bundle
-                )
-            return self._ssl_ctx
+    def _tls_half(self) -> "TLS":
+        """Build the TLS half on first https use. `._ssl` needs the stdlib `ssl` module,
+        which a reduced build may not have — and a plain-HTTP caller never asks for it."""
+        from ._ssl import TLS
+
+        with self._tls_lock:
+            if self._tls is None:
+                self._tls = TLS(verify=self._verify, ca_bundle=self._ca_bundle)
+            return self._tls
 
     def pool_stats(self) -> dict:
         return self._pool.stats()
@@ -388,6 +395,10 @@ class StdlibTransport:
         origin: tuple[str, str, int],
         connect_timeout: float,
     ) -> _SyncConnection:
+        # Built before the socket, as on the async side: a missing `ssl` or an unreadable
+        # ca_bundle then fails with nothing yet open.
+        tls = self._tls_half() if parsed.is_tls else None
+
         connect_host = proxy.host if proxy is not None else parsed.host
         connect_port = proxy.port if proxy is not None else parsed.port
         try:
@@ -418,17 +429,8 @@ class StdlibTransport:
                     pass
                 raise
 
-        if parsed.is_tls:
-            try:
-                ctx = self._get_ssl_ctx()
-                sock.settimeout(connect_timeout)
-                sock = ctx.wrap_socket(sock, server_hostname=parsed.host)
-            except (SSLError, OSError) as exc:
-                try:
-                    sock.close()
-                except Exception:
-                    pass
-                raise ConnectError(f"TLS handshake failed: {exc}") from exc
+        if tls is not None:
+            sock = tls.wrap(sock, server_hostname=parsed.host, timeout=connect_timeout)
 
         return _SyncConnection(origin, sock)
 
