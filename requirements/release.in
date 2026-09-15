@@ -1,0 +1,4 @@
+# Release-time build tools. Regenerate with:
+#   uv pip compile --generate-hashes --python-version 3.12 -o requirements/release.txt requirements/release.in
+build
+twine
