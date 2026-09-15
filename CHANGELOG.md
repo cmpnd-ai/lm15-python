@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+**`import lm15` no longer assumes `ssl`, `fcntl`, or a home directory.** Each
+platform check moves out of module scope and into the code path that needs it,
+so lm15 imports on CPython for wasm32-wasip2 (componentize-py) as it already
+did on Pyodide. Plain HTTP works on a build without `ssl`; the first https
+request on such a build raises `ConnectError` naming `FetchTransport`. Where
+neither `fcntl` nor `msvcrt` exists, or no home directory can be found for the
+lock, refreshing a stored credential raises `NotConfiguredError` (the class
+lm15-ts uses for the same case) with the way out named; reading still works.
+The credential-path constants keep their `~/...` form unexpanded instead of
+failing the import. Contributed by Adriaan Moors (#8).
+
+## Unreleased
+
 **Deprecated: `ProviderProfile` / `EndpointProfile`, `OpenAILM.from_profile`,
 `OpenAILM(profile=...)`, and the compat guessed from `base_url`** — removed in
 1.0.0. Say it with `compat=` (a preset name supplies its address), `base_url=`,
