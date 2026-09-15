@@ -418,3 +418,9 @@ def test_compat_guess_warning_never_prints_url_credentials() -> None:
         lm.plan(Request(model="m", messages=(Message.user("hi"),)))  # the guess happens per request
     text = " ".join(str(w.message) for w in caught if issubclass(w.category, DeprecationWarning))
     assert "openrouter.ai" in text and "secret-token" not in text and "also-secret" not in text and "user" not in text
+    # An out-of-range port must not turn the warning into a failure.
+    lm = OpenAILM(api_key="k", base_url="https://openrouter.ai:99999/api/v1")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        lm.plan(Request(model="m", messages=(Message.user("hi"),)))
+    assert any("openrouter.ai:99999" in str(w.message) for w in caught)
