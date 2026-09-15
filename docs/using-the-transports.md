@@ -11,9 +11,22 @@ from lm15.transports import StdlibTransport, StdlibAsyncTransport
 ```
 
 Provider LMs create a sync `StdlibTransport` automatically when no transport is
-passed. Create one explicitly when you want to share a pool, tune timeouts, or
-customize TLS. Use the async transport when you are doing transport-level async
-I/O yourself.
+passed, and a router builds one transport that every LM it constructs shares.
+For the two everyday knobs — how long to wait and how many connections to
+open — you do not need to touch the transport at all:
+
+```python
+import lm15
+
+router = lm15.LMRouter(lm15.RouterConfig(
+    timeouts=lm15.Timeouts(read=1800),   # a slow local model, or a long non-streaming answer
+    max_connections=200,                 # a wide evaluation
+))
+```
+
+Create a transport explicitly when you want to share a pool across routers,
+customize TLS, or pin a proxy. Use the async transport when you are doing
+transport-level async I/O yourself.
 
 ## Transport request and response models
 
@@ -28,8 +41,8 @@ request = TransportRequest(
     headers=[("Authorization", "Bearer sk-..."), ("Content-Type", "application/json")],
     body=b'{"hello":"world"}',
     connect_timeout=10.0,
-    read_timeout=60.0,
-    write_timeout=60.0,
+    read_timeout=600.0,
+    write_timeout=600.0,
 )
 ```
 
@@ -147,7 +160,7 @@ A `StdlibTransport` owns a keep-alive pool keyed by origin `(scheme, host,
 port)`. Reuse a transport for many requests to get connection reuse.
 
 ```python
-transport = StdlibTransport(max_connections=10)
+transport = StdlibTransport(max_connections=100)
 try:
     for url in urls:
         with transport.stream(TransportRequest(method="GET", url=url)) as resp:
@@ -157,8 +170,17 @@ finally:
     transport.close()
 ```
 
-`max_connections` is the total pool slot limit. Concurrent requests block until
-a slot is available or the pool wait times out.
+`max_connections` (default 100, the httpx and aiohttp norm) is the total pool
+slot limit. Concurrent requests beyond it wait for a free slot, up to
+`pool_timeout` (default 600 s; `None` waits indefinitely); the error when
+that wait runs out names both knobs. A provider's rate limit, not this
+number, is the practical ceiling on cloud calls; against a single local
+model the server queues what the pool admits.
+
+Close a transport (or use it as a context manager) when you are done with
+it. One that is simply dropped closes its idle sockets when garbage-
+collected, so a forgotten short-lived client does not leak file descriptors
+or warn under `python -W error`.
 
 Idle connections are checked for staleness before reuse. If a server closes a
 keep-alive connection while idle, the transport drops it and opens a fresh one.
@@ -181,15 +203,27 @@ proxy never sees inside the tunnel.
 
 ## Timeouts
 
-Transport constructors set default timeouts:
+Every timeout is per operation, not per request: `read_timeout` bounds the
+wait for the *next* byte, so a stream that keeps trickling never times out
+and a stalled one fails `read_timeout` seconds after its last byte. The
+defaults are the provider SDKs' (OpenAI, Anthropic and litellm all wait
+600 s), because a model that thinks for three minutes before its first byte
+is ordinary, and a client that gives up sooner reports it as a network
+failure — and, under a retry loop, restarts the generation each time.
 
 ```python
 transport = StdlibTransport(
-    connect_timeout=10.0,
-    read_timeout=60.0,
-    write_timeout=60.0,
+    connect_timeout=10.0,    # TCP + TLS (+ proxy CONNECT)
+    read_timeout=600.0,      # next byte of the reply
+    write_timeout=600.0,     # sending the request
+    pool_timeout=600.0,      # a free connection; None waits indefinitely
 )
 ```
+
+`lm15.Timeouts(connect=, read=, write=, pool=)` is the same set of numbers
+as a value, for `RouterConfig(timeouts=...)`. A read timeout's message says
+so — `this is lm15's read timeout, not a server failure — raise it with
+Timeouts(read=...)` — so it is not mistaken for a dead server and retried.
 
 A request can override any of them:
 
@@ -210,6 +244,16 @@ from lm15.transports import ConnectTimeout, ReadTimeout, WriteTimeout
 
 Provider LMs catch transport exceptions and translate them to
 `lm15.errors.TransportError` for the higher-level API.
+
+## Compressed replies
+
+Requests advertise `Accept-Encoding: identity`: a compressed SSE stream sits
+in a proxy's buffer until its window fills, which defeats streaming. Gateways
+and CDNs compress anyway; a reply that arrives `Content-Encoding: gzip` (or
+`x-gzip`, or `deflate`, zlib-wrapped or raw) is decoded incrementally, so a
+compressed stream still streams. `br` and `zstd` have no stdlib codec and
+raise a `ProtocolError` that names the coding rather than handing compressed
+bytes to a JSON parser.
 
 ## TLS verification
 

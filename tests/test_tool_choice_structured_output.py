@@ -63,19 +63,34 @@ def test_openai_name_defaults_to_response() -> None:
 
 # ─── tool choice silent cells ────────────────────────────────────────
 
-def test_gemini_parallel_false_raises() -> None:
+def test_gemini_parallel_false_is_dropped_and_recorded() -> None:
+    # MAP-13 (was a MAP-8 rule 2 refusal): GenerateContent has no parallel
+    # knob and returned two calls regardless (live 2026-09-02).  A
+    # preference: dropped, recorded, and toolConfig goes without it.
+    from tests._adapt import adapted, refuses
     lm = GeminiLM(api_key="k", transport=FakeTransport([]))
-    with pytest.raises(UnsupportedFeatureError, match="parallel"):
-        _body(lm, _req("gemini-2.5-flash", tool_choice=ToolChoice(parallel=False)))
+    out = adapted(lm, _req("gemini-2.5-flash", tool_choice=ToolChoice(parallel=False)))
+    assert out["config.tool_choice.parallel"].action == "dropped"
+    assert out["__body__"]["toolConfig"] == {"functionCallingConfig": {"mode": "AUTO"}}
+    refuses(lm, _req("gemini-2.5-flash", tool_choice=ToolChoice(parallel=False)), "config.tool_choice.parallel")
     assert _body(lm, _req("gemini-2.5-flash", tool_choice=ToolChoice(parallel=True)))["toolConfig"] == {"functionCallingConfig": {"mode": "AUTO"}}
 
 
-def test_xai_allowlist_and_forced_with_format_raise() -> None:
+def test_xai_allowlist_is_client_side_and_forced_with_format_raises() -> None:
+    # MAP-13 (was a MAP-8 rule 1 refusal): api.x.ai ignores allowed_tools
+    # (live 2026-09-02).  The allowlist is applied by sending only those
+    # tools — what an allowlist means — and recorded.  A forced tool beside
+    # a response_format still raises (rule 4b: the server drops the call).
+    from tests._adapt import adapted
     lm = XaiLM(api_key="k", transport=FakeTransport([]))
-    with pytest.raises(UnsupportedFeatureError, match="allowed subsets"):
-        _body(lm, _req("grok-4.6", tool_choice=ToolChoice(allowed=("lookup",))))
-    with pytest.raises(UnsupportedFeatureError, match="allowed subsets"):
-        _body(lm, _req("grok-4.6", tool_choice=ToolChoice(mode="required", allowed=("lookup", "weather"))))
+    out = adapted(lm, _req("grok-4.6", tool_choice=ToolChoice(allowed=("lookup",))))
+    assert out["config.tool_choice.allowed"].action == "client_side"
+    assert [t["function"]["name"] for t in out["__body__"]["tools"]] == ["lookup"]
+    assert out["__body__"]["tool_choice"] == "auto"
+    out = adapted(lm, _req("grok-4.6", tool_choice=ToolChoice(mode="required", allowed=("lookup", "weather"))))
+    assert out["config.tool_choice.allowed"].applied == ["lookup", "weather"]
+    assert out["__body__"]["tool_choice"] == "required"
     assert _body(lm, _req("grok-4.6", tool_choice=ToolChoice(mode="required", allowed=("lookup",))))["tool_choice"] == {"type": "function", "function": {"name": "lookup"}}
-    with pytest.raises(UnsupportedFeatureError, match="forced tool"):
+    with pytest.raises(UnsupportedFeatureError, match="forced tool") as err:
         _body(lm, _req("grok-4.6", tool_choice=ToolChoice(mode="required"), response_format={"type": "json_object"}))
+    assert err.value.feature == "config.tool_choice.mode"

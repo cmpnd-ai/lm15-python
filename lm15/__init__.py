@@ -212,6 +212,12 @@ from .router import (
     UnknownModelError,
 )
 
+# ── Connection budget (lm15.transports) ───────────────────────────────
+from .transports import Timeouts
+
+# ── MAP-13 adaptations (lm15.adaptation) ──────────────────────────────
+from .adaptation import Adaptation, AdaptationPolicy
+
 # ── Tool derivation (lm15.tools) ─────────────────────────────────────
 from .tools import (
     DerivedParam,
@@ -273,6 +279,8 @@ __all__ = [
     "ModelInfo", "ModelRegistry",
     # router (lm15.router; the rule/preset tables live there too)
     "LMRouter", "AsyncLMRouter", "RouterConfig", "Resolution",
+    "Timeouts",
+    "Adaptation", "AdaptationPolicy",
     "UnknownModelError",
     "AmbiguousModelError", "MissingCredentialError",
     # tool derivation (lm15.tools)

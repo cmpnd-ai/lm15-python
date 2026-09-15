@@ -110,7 +110,7 @@ def test_build_then_ingest_is_identity_on_a_rich_request() -> None:
         config=Config(max_tokens=100, temperature=0.5, top_p=0.9, stop=("END",), logprobs=2,
                       response_format={"type": "json_schema", "schema": {"type": "object"}, "name": "Out", "strict": True},
                       tool_choice=ToolChoice(mode="auto", parallel=False), reasoning=Reasoning(effort="low"),
-                      service_tier="flex", user_id="u", store=False, extensions={"seed": 7}),
+                      service_tier="flex", user_id="u", store=False, seed=7, frequency_penalty=0.5, extensions={"logit_bias": {"1": -1}}),
     )
     lm = OpenAIChatLM(api_key="k")
     wire = lm.build_request(req, stream=False)
@@ -120,22 +120,37 @@ def test_build_then_ingest_is_identity_on_a_rich_request() -> None:
 # ─── the buckets (rule 2) ────────────────────────────────────────────
 
 def test_extensions_bucket_is_verbatim_and_round_trips() -> None:
-    req = request_from_openai_chat(body(seed=7, logit_bias={"1": -100}, presence_penalty=0.5, frequency_penalty=0, metadata={"k": "v"}, verbosity="low"))
-    assert req.config.extensions == {"seed": 7, "logit_bias": {"1": -100}, "presence_penalty": 0.5, "frequency_penalty": 0, "metadata": {"k": "v"}, "verbosity": "low"}
+    # seed and the penalties are canonical since 2026-09-14 (MAP-13 §3f);
+    # logit_bias, metadata, verbosity and prediction stay verbatim extensions.
+    req = request_from_openai_chat(body(seed=7, logit_bias={"1": -100}, presence_penalty=0.5, frequency_penalty=0, metadata={"k": "v"}, verbosity="low", prediction={"type": "content", "content": "x"}))
+    assert (req.config.seed, req.config.presence_penalty, req.config.frequency_penalty) == (7, 0.5, 0.0)
+    assert req.config.extensions == {"logit_bias": {"1": -100}, "metadata": {"k": "v"}, "verbosity": "low", "prediction": {"type": "content", "content": "x"}}
     sent = json.loads(OpenAIChatLM(api_key="k").build_request(req, stream=False).body)
     assert sent["seed"] == 7 and sent["logit_bias"] == {"1": -100} and sent["frequency_penalty"] == 0
 
 
 @pytest.mark.parametrize("extra", [
-    {"n": 2}, {"functions": []}, {"function_call": "auto"}, {"audio": {"voice": "alloy", "format": "wav"}},
-    {"modalities": ["text", "audio"]}, {"prediction": {"type": "content", "content": "x"}},
-    {"web_search_options": {}}, {"top_k": 3},
+    {"n": 2}, {"audio": {"voice": "alloy", "format": "wav"}},
+    {"modalities": ["text", "audio"]},
+    {"web_search_options": {}},
     {"never_heard_of_it": 1},  # no verdict -> refused, never dropped
 ])
 def test_refused_keys_name_the_key(extra) -> None:
     with pytest.raises(UnsupportedFeatureError) as exc:
         request_from_openai_chat(body(**extra))
     assert next(iter(extra)) in str(exc.value)
+
+
+def test_deprecated_functions_shape_translates_and_top_k_is_canonical() -> None:
+    # MAP-13 (2026-09-14): functions/function_call are a spelling of
+    # tools/tool_choice; top_k reads into Config.top_k (the chat builder then
+    # drops it with a record).  Both were refused before.
+    req = request_from_openai_chat(body(functions=[{"name": "f", "parameters": {"type": "object", "properties": {}}}], function_call={"name": "f"}))
+    assert [t.name for t in req.tools] == ["f"] and req.config.tool_choice == ToolChoice(mode="required", allowed=("f",))
+    assert request_from_openai_chat(body(function_call="none")).config.tool_choice == ToolChoice(mode="none")
+    assert request_from_openai_chat(body(top_k=3)).config.top_k == 3
+    with pytest.raises(ValueError, match="cannot both"):
+        request_from_openai_chat(body(functions=[], tools=[]))
 
 
 def test_call_mode_keys_are_the_only_drop() -> None:

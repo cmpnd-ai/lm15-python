@@ -138,7 +138,10 @@ def test_complete_mirrors_sync_parse(provider, sync_cls, async_cls):
                      headers=[("content-type", "application/json")], body=body),
     )
     actual = asyncio.run(async_lm.complete(_REQ))
-    assert actual == expected
+    # MAP-13: complete() stamps the build's adaptations (Anthropic defaults
+    # max_tokens when _REQ sets none); the parse itself is what mirrors.
+    assert actual.adaptations == sync_lm.plan(_REQ)
+    assert dataclasses.replace(actual, adaptations=()) == expected
 
 
 @pytest.mark.parametrize(("provider", "sync_cls", "async_cls"), PAIRS)
@@ -153,7 +156,7 @@ def test_stream_mirrors_sync_parse(provider, sync_cls, async_cls):
         for raw in parse_sse(iter(body.splitlines(keepends=True))):
             yield from (e for e in sync_lm.parse_stream_events(_REQ, raw) if e is not None)
 
-    expected = list(coalesce_stream(sync_events(), model=_REQ.model))
+    expected = list(coalesce_stream(sync_events(), model=_REQ.model, adaptations=sync_lm.plan(_REQ)))
 
     async def collect():
         return [event async for event in async_lm.stream(_REQ)]

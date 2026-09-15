@@ -193,6 +193,17 @@ source of truth for both contributors and reviewers:
 6. **No secrets.** Never commit API keys, tokens, or fixture data
    captured with real credentials. Secret scanning with push protection
    is enabled and will reject such pushes.
+7. **Adapt, record, refuse — in that order (MAP-13).** When a setting
+   cannot go to a wire as asked, ask what the caller MEANT and whether
+   this provider can deliver it — never "does this wire have a field of
+   this name". Same meaning, other spelling: translate. Cannot, and
+   nothing depends on it: adapt (drop / clamp / substitute / client-side
+   / satisfied / defaulted) and record it in `Response.adaptations`.
+   Refuse only under MAP-13's four conditions, naming the one that
+   applies. A new refusal in a pull request must cite its condition; a
+   refusal that rests on a compat-preset value with no live receipt is
+   rejected (`lm15-contract/docs/mapping-rules.md` MAP-13,
+   `lm15-dev/THEORY.md` §3.9, §3.17).
 
 ## Building from source
 

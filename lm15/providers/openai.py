@@ -10,6 +10,7 @@ import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any, Callable, ClassVar, Iterator, Mapping
 
+from ..adaptation import AdaptationPolicy, adapt, check_policy
 from ..errors import (
     AuthError,
     BillingError,
@@ -197,7 +198,28 @@ def _cache_breakpoint_index(request: Request, cache_control: str) -> int | None:
         return None
     if cache_control != "openai":
         return None
-    return min(cache_cfg.prefix_until_index, len(request.messages) - 1)
+    asked = min(cache_cfg.prefix_until_index, len(request.messages) - 1)
+    # MAP-13: the wire carries the mark on a text block of a user/developer
+    # message only.  A mark asked for elsewhere walks back to the nearest
+    # eligible message ("cache up to here" — the nearest boundary before
+    # "here" is the obvious answer); with none, the mark is dropped and
+    # implicit caching still applies.
+    for index in range(asked, -1, -1):
+        msg = request.messages[index]
+        if msg.role in ("assistant", "tool") or not msg.parts or not isinstance(msg.parts[-1], TextPart):
+            continue
+        if index != asked:
+            adapt("config.cache.prefix_until_index", "substituted",
+                  f"message {asked} is a {request.messages[asked].role} message or does not end with "
+                  "text; the Responses wire marks text blocks of user/developer messages only, so the "
+                  "mark moved to the nearest eligible message before it",
+                  asked=asked, applied=index)
+        return index
+    adapt("config.cache.prefix_until_index", "dropped",
+          f"no user/developer message ending with text at or before message {asked}; the Responses "
+          "wire marks text blocks only (implicit caching still applies)",
+          asked=asked)
+    return None
 
 
 def _has_explicit_breakpoint(request: Request, cache_control: str) -> bool:
@@ -241,7 +263,7 @@ def _cache_common_payload(request: Request, payload: dict, cache_control: str, p
             raise UnsupportedFeatureError(
                 f"{provider}: cache.resource is not supported — this provider has no stored-cache "
                 "tier; it caches every prompt prefix automatically",
-                provider=provider,
+                provider=provider, feature="config.cache.resource",
             )
         return
     if cache_cfg.mode == "off":
@@ -271,7 +293,7 @@ def _cache_common_payload(request: Request, payload: dict, cache_control: str, p
         raise UnsupportedFeatureError(
             f"{provider}: cache.resource is not supported — this provider has no stored-cache "
             "tier; it caches by marks on blocks (prefix / prefix_until_index) and automatically",
-            provider=provider,
+            provider=provider, feature="config.cache.resource",
         )
 
 
@@ -452,11 +474,14 @@ class OpenAILM(BaseProviderLM):
     clock: "Callable[[], datetime] | None" = field(default=None, repr=False, kw_only=True)
     account_id: str | None = None
 
+    # MAP-13 policy: "note" (adapt and record), "silent", or "refuse".
+    adaptations: AdaptationPolicy = field(default="note", kw_only=True)
     provider: str = field(default="openai", init=False)
     manifest: ClassVar[ProviderManifest] = OPENAI_API
     _compat_base: OpenAIResponsesCompat | None = field(init=False, repr=False, default=None)
 
     def __post_init__(self) -> None:
+        check_policy(self.adaptations)
         if self.profile is not None:
             import warnings
 
@@ -863,16 +888,26 @@ class OpenAILM(BaseProviderLM):
         if request.config.top_p is not None:
             payload["top_p"] = request.config.top_p
         if request.config.stop:
-            raise UnsupportedFeatureError(
-                f"{self.provider}: config.stop has no field on the Responses wire (the Chat Completions "
-                "dialect carries `stop`); a silent omission would run the model past the sequence",
-                provider=self.provider,
-            )
+            # MAP-13 client_side: the Responses wire has no stop field; the
+            # text is cut at the first sequence after the wire (complete)
+            # or as it streams (the source is closed at the cut).
+            adapt("config.stop", "client_side",
+                  "the Responses wire has no stop field; the reply is streamed and the connection "
+                  "closed at the first stop sequence, so generation stops there and nothing past it "
+                  "is billed — the usage report rides only the final frame, so it is not reported "
+                  "when the cut happens (never estimated)",
+                  asked=list(request.config.stop), applied=list(request.config.stop), provider=self.provider)
         if request.config.top_k is not None:
-            raise UnsupportedFeatureError(
-                f"{self.provider}: config.top_k has no field on the Responses wire (Anthropic and Gemini carry it)",
-                provider=self.provider,
-            )
+            adapt("config.top_k", "dropped",
+                  "the Responses wire has no top_k (Anthropic and Gemini carry it)",
+                  asked=request.config.top_k, provider=self.provider)
+        for name in ("seed", "frequency_penalty", "presence_penalty"):
+            if getattr(request.config, name) is not None:
+                # The Responses API dropped these from the Chat Completions
+                # wire (no field in the reference); the chat dialect carries them.
+                adapt(f"config.{name}", "dropped",
+                      f"the Responses wire has no {name} field (the Chat Completions dialect carries it)",
+                      asked=getattr(request.config, name), provider=self.provider)
         if request.config.logprobs is not None:
             # Verified live 2026-09-01: include triggers per-token logprobs;
             # top_logprobs (0–20) controls the alternatives count.
@@ -909,19 +944,17 @@ class OpenAILM(BaseProviderLM):
                 # 2026-09-02: gpt-5.6-sol rejects minimal, gpt-5.4-mini
                 # rejects max).  No budget exists on this wire.
                 if reasoning.thinking_budget is not None:
-                    raise UnsupportedFeatureError(
-                        f"{self.provider}: reasoning.thinking_budget is not supported — this wire "
-                        "has no thinking token budget; use effort (Anthropic's manual class and "
-                        "Gemini take a budget)",
-                        provider=self.provider,
-                    )
+                    # MAP-13: effort carries the intent (MAP-7 rule 5); no
+                    # budget field exists on this wire.
+                    adapt("config.reasoning.thinking_budget", "dropped",
+                          "this wire has no thinking token budget; effort carries the intent "
+                          "(Anthropic's manual class and Gemini take a budget)",
+                          asked=reasoning.thinking_budget, provider=self.provider)
                 effort = reasoning.effort
                 if reasoning.summary in ("concise", "detailed") and compat.reasoning_format != "responses_reasoning":
-                    raise UnsupportedFeatureError(
-                        f"{self.provider}: reasoning.summary={reasoning.summary!r} is an OpenAI Responses "
-                        "detail level; this wire has no summary levels (use 'auto')",
-                        provider=self.provider,
-                    )
+                    adapt("config.reasoning.summary", "substituted",
+                          "this wire has no summary detail levels; 'auto' is what it shows",
+                          asked=reasoning.summary, applied="auto", provider=self.provider)
                 if compat.reasoning_format == "responses_reasoning":
                     reasoning_payload: dict[str, Any] = {"effort": effort}
                     if reasoning.summary is not None:

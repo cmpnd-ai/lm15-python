@@ -19,12 +19,17 @@ Design:
   honors HTTP_PROXY / HTTPS_PROXY / ALL_PROXY / NO_PROXY.  Plain-HTTP targets
   are forwarded absolute-URI; TLS targets are tunneled with CONNECT and the
   handshake runs end-to-end to the origin (see `_proxy.py`).
+- Lifetime: `close()` (or `with`) closes every socket.  A transport that is
+  garbage-collected without it closes its idle sockets from a finalizer so
+  a forgotten short-lived client does not leak file descriptors or warn
+  under `-W error`; sockets still in use belong to their open response.
 """
 from __future__ import annotations
 
 import select
 import socket
 import threading
+import weakref
 from typing import Iterator
 
 from ._exceptions import (
@@ -44,15 +49,22 @@ from ._http11 import (
     ResponseHeadParser,
     build_request_head,
 )
+from ._limits import (
+    DEFAULT_CONNECT_TIMEOUT,
+    DEFAULT_MAX_CONNECTIONS,
+    DEFAULT_POOL_TIMEOUT,
+    DEFAULT_READ_TIMEOUT,
+    DEFAULT_WRITE_TIMEOUT,
+    check_max_connections,
+    pool_timeout_hint,
+    read_timeout_hint,
+)
 from ._proxy import ProxyRoute, connect_payload, proxy_route_for, route_origin
 from ._ssl import SSLError, make_ssl_context
 from ._types import TransportRequest, TransportResponse
 from ._url import ParsedURL, parse_url
 
 
-_DEFAULT_CONNECT_TIMEOUT = 10.0
-_DEFAULT_READ_TIMEOUT = 60.0
-_DEFAULT_WRITE_TIMEOUT = 60.0
 _READ_CHUNK = 64 * 1024
 
 
@@ -114,13 +126,17 @@ class _ConnectionPool:
         self._slot = threading.Semaphore(max_connections)
         self._total_opened = 0
         self._closed = False
+        # Close idle sockets when the pool itself is collected.  A finalizer
+        # (not __del__) so nothing here runs during interpreter teardown
+        # with half-dead globals; it captures the idle dict, never the pool.
+        weakref.finalize(self, _close_idle, self._idle)
 
     def acquire_slot(self, timeout: float | None = None) -> None:
         if self._closed:
             raise TransportError("transport is closed")
         ok = self._slot.acquire(timeout=timeout)
         if not ok:
-            raise TransportError("timed out waiting for connection pool slot")
+            raise TransportError(pool_timeout_hint(timeout or 0.0, self._max))
 
     def release_slot(self) -> None:
         self._slot.release()
@@ -180,19 +196,33 @@ class _ConnectionPool:
             self._in_use.clear()
 
 
+def _close_idle(idle: dict) -> None:
+    for q in list(idle.values()):
+        for conn in q:
+            conn.close()
+    idle.clear()
+
+
 # ─── Transport ───────────────────────────────────────────────────────
 
 
 class StdlibTransport:
-    """Sync HTTP/1.1 transport using only the Python standard library."""
+    """Sync HTTP/1.1 transport using only the Python standard library.
+
+    Timeouts are per operation (``_limits.py``): ``read_timeout`` bounds the
+    wait for the NEXT byte, so a streaming reply that keeps arriving never
+    trips it.  ``pool_timeout`` bounds the wait for a free connection when
+    ``max_connections`` are busy; ``None`` waits indefinitely.
+    """
 
     def __init__(
         self,
         *,
-        connect_timeout: float = _DEFAULT_CONNECT_TIMEOUT,
-        read_timeout: float = _DEFAULT_READ_TIMEOUT,
-        write_timeout: float = _DEFAULT_WRITE_TIMEOUT,
-        max_connections: int = 10,
+        connect_timeout: float = DEFAULT_CONNECT_TIMEOUT,
+        read_timeout: float = DEFAULT_READ_TIMEOUT,
+        write_timeout: float = DEFAULT_WRITE_TIMEOUT,
+        pool_timeout: float | None = DEFAULT_POOL_TIMEOUT,
+        max_connections: int = DEFAULT_MAX_CONNECTIONS,
         verify: bool = True,
         ca_bundle: str | None = None,
         user_agent: str = "lm15/stdlib",
@@ -202,6 +232,8 @@ class StdlibTransport:
         self._connect_timeout = connect_timeout
         self._read_timeout = read_timeout
         self._write_timeout = write_timeout
+        self._pool_timeout = pool_timeout
+        self._max_connections = check_max_connections(max_connections)
         self._user_agent = user_agent
         self._verify = verify
         self._ca_bundle = ca_bundle
@@ -209,8 +241,28 @@ class StdlibTransport:
         self._trust_env = trust_env
         self._ssl_ctx: ssl.SSLContext | None = None
         self._ssl_lock = threading.Lock()
-        self._pool = _ConnectionPool(max_connections)
+        self._pool = _ConnectionPool(self._max_connections)
         self._closed = False
+
+    @property
+    def max_connections(self) -> int:
+        return self._max_connections
+
+    def copy(self) -> "StdlibTransport":
+        """A fresh, open transport with this one's configuration and none of
+        its connections (an interactive runner closed the original)."""
+        return type(self)(
+            connect_timeout=self._connect_timeout,
+            read_timeout=self._read_timeout,
+            write_timeout=self._write_timeout,
+            pool_timeout=self._pool_timeout,
+            max_connections=self._max_connections,
+            verify=self._verify,
+            ca_bundle=self._ca_bundle,
+            user_agent=self._user_agent,
+            proxy=self._proxy,
+            trust_env=self._trust_env,
+        )
 
     def _get_ssl_ctx(self) -> ssl.SSLContext:
         with self._ssl_lock:
@@ -255,7 +307,7 @@ class StdlibTransport:
         write_timeout = request.write_timeout or self._write_timeout
 
         # Acquire a pool slot FIRST (may block if we're at max_connections)
-        self._pool.acquire_slot(timeout=connect_timeout * 5)
+        self._pool.acquire_slot(timeout=self._pool_timeout)
         slot_released = False
 
         def release_slot_once() -> None:
@@ -462,7 +514,9 @@ class StdlibTransport:
             try:
                 data = conn.sock.recv(_READ_CHUNK)
             except socket.timeout as exc:
-                raise ReadTimeout(f"read timed out waiting for headers: {exc}") from exc
+                raise ReadTimeout(
+                    f"read timed out waiting for headers: {read_timeout_hint(read_timeout)}"
+                ) from exc
             except OSError as exc:
                 raise ReadError(f"read failed: {exc}") from exc
             if not data:
@@ -498,7 +552,9 @@ class StdlibTransport:
                     data = conn.sock.recv(_READ_CHUNK)
                 except socket.timeout as exc:
                     aborted = True
-                    raise ReadTimeout(f"read timed out mid-body: {exc}") from exc
+                    raise ReadTimeout(
+                        f"read timed out mid-body: {read_timeout_hint(read_timeout)}"
+                    ) from exc
                 except OSError as exc:
                     aborted = True
                     raise ReadError(f"read failed: {exc}") from exc
@@ -509,6 +565,9 @@ class StdlibTransport:
                     except ProtocolError:
                         aborted = True
                         raise
+                    tail = decoder.drain()
+                    if tail:
+                        yield tail
                     break
                 try:
                     for out in decoder.feed(data):

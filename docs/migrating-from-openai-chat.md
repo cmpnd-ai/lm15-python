@@ -445,7 +445,8 @@ The trade-off is deliberate: this migration helper has two return types, selecte
 |---|---|
 | `api_key=` | `RouterConfig(api_keys={provider: key})`, or the environment |
 | `api_base=`, `base_url=` | `RouterConfig(base_urls={provider: url})` |
-| `timeout=`, `headers=`, `extra_headers=`, `extra_query=` | `RouterConfig(transport=…)` — see [Transports](using-the-transports.md) |
+| `timeout=` | `RouterConfig(timeouts=Timeouts(read=…))` — see [Transports](using-the-transports.md) |
+| `headers=`, `extra_headers=`, `extra_query=` | `RouterConfig(transport=…)` — see [Transports](using-the-transports.md) |
 | `num_retries=`, `max_retries=` | your own loop over `lm15.RETRYABLE_ERRORS`; lm15 never retries on its own |
 | `cache=`, `caching=` | your own cache keyed on the `Request`; lm15 has no response cache |
 | `extra_body=` | `config.extensions` on the `Request` (build it, then edit) |

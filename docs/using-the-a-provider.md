@@ -59,7 +59,7 @@ from lm15.transports import StdlibTransport
 with OpenAILM(api_key="sk-...") as lm:
     ...
 
-with StdlibTransport(max_connections=10) as transport:
+with StdlibTransport(max_connections=100) as transport:
     openai = OpenAILM(api_key="sk-...", transport=transport)
     anthropic = AnthropicLM(api_key="sk-ant-...", transport=transport)
     ...

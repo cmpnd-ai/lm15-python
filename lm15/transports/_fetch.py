@@ -35,7 +35,7 @@ except ImportError:  # pragma: no cover - exercised under CPython only by the im
     JsProxy = None  # type: ignore[assignment]
     to_js = None  # type: ignore[assignment]
 
-DEFAULT_READ_TIMEOUT = 60.0
+from ._limits import DEFAULT_READ_TIMEOUT, read_timeout_hint
 
 
 def _require_pyodide() -> None:
@@ -103,7 +103,7 @@ class FetchTransport:
                     result = await asyncio.wait_for(reader.read(), read_timeout)
                 except asyncio.TimeoutError as exc:
                     controller.abort()
-                    raise TransportError(f"response body read timed out after {read_timeout}s") from exc
+                    raise TransportError(f"response body read timed out: {read_timeout_hint(read_timeout)}") from exc
                 except Exception as exc:
                     raise TransportError(f"response body read failed ({_message(exc)})") from exc
                 if result.done:

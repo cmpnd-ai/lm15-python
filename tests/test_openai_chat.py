@@ -259,11 +259,15 @@ def test_build_request_reasoning_effort_policy() -> None:
         config=Config(reasoning=Reasoning(effort="high")),
     )
     assert _payload(_lm(), request)["reasoning_effort"] == "high"
-    # ollama policy: no reasoning field on this wire — a set dial is a raise,
-    # never an omission (MAP-5 / MAP-7 rule 2; until 2026-09-11 this test
-    # pinned the silent drop; cases/ollama/reasoning_effort_refused.json).
-    with pytest.raises(UnsupportedFeatureError, match="thinking_format='none'"):
-        _payload(_lm(compat="ollama"), request)
+    # ollama policy: reasoning_effort on the wire, mapped to `think` by Ollama
+    # itself (openai/openai.go thinkFromReasoningEffort; THEORY.md §3.17 —
+    # until 2026-09-14 the preset said "no dial", written without a receipt).
+    assert _payload(_lm(compat="ollama"), request)["reasoning_effort"] == "high"
+    # lmstudio policy (hypothesis, no receipt): no dial on the wire — MAP-13
+    # drops the setting and records it, never refuses on an unverified line.
+    from tests._adapt import adapted
+    out = adapted(_lm(compat="lmstudio"), request)
+    assert out["config.reasoning"].action == "dropped" and "reasoning_effort" not in out["__body__"]
     # openrouter policy: nested reasoning object.
     assert _payload(_lm(compat="openrouter"), request)["reasoning"] == {"effort": "high"}
 
@@ -303,10 +307,14 @@ def test_preset_resolution_sets_default_base_url() -> None:
         assert _lm(compat=name).base_url == url
 
 
-def test_lmstudio_is_ollamas_policy_at_its_own_address() -> None:
+def test_lmstudio_has_its_own_policy_at_its_own_address() -> None:
     from lm15.compat import OPENAI_CHAT_PRESETS, OPENAI_RESPONSES_PRESETS
 
-    assert OpenAIChatCompat.preset("lmstudio") is OPENAI_CHAT_PRESETS["ollama"]
+    # 2026-09-14: ollama's chat policy has the reasoning dial (receipted from
+    # Ollama's source); LM Studio's is its own unreceipted hypothesis.
+    assert OpenAIChatCompat.preset("ollama").thinking_format == "reasoning_effort"
+    assert OpenAIChatCompat.preset("lmstudio").thinking_format == "none"
+    assert OpenAIChatCompat.preset("lmstudio") is OPENAI_CHAT_PRESETS["lmstudio"]
     assert OPENAI_RESPONSES_PRESETS["lmstudio"] is OPENAI_RESPONSES_PRESETS["ollama"]
     assert _lm(compat="lmstudio").base_url != _lm(compat="ollama").base_url
 
@@ -576,14 +584,24 @@ class TestOllamaLiveSmoke:
         assert any(e.usage is not None and e.usage.output_tokens > 0 for e in ends)
 
 
-def test_reasoning_dial_on_a_server_without_a_field_raises_before_the_wire():
-    """MAP-5 / MAP-7 rule 2: ollama's preset has thinking_format='none'; a set dial is a raise, never an omission (cases/ollama/reasoning_effort_refused.json)."""
-    from lm15 import Config, Message, OpenAIChatLM, Reasoning, Request, UnsupportedFeatureError
+def test_reasoning_dial_on_ollama_reaches_the_wire_and_lmstudio_drops_with_a_record():
+    """Ollama maps reasoning_effort to `think` (source receipt, THEORY.md §3.17);
+    the 2026-09-11 refusal here rested on an unreceipted preset line and is
+    reversed (cases/ollama/reasoning_effort.json).  LM Studio's policy is an
+    unverified hypothesis: MAP-13 drops and records, never refuses on it."""
+    import json
+
+    from lm15 import Config, Message, OpenAIChatLM, Reasoning, Request
+    from tests._adapt import adapted
 
     lm = OpenAIChatLM(api_key="unused", compat="ollama")
-    for effort in ("low", "off"):
+    for effort, wire in (("low", "low"), ("off", "none"), ("minimal", "minimal")):
         request = Request(model="qwen3.5:0.8b", messages=(Message.user("Say ok."),), config=Config(max_tokens=64, reasoning=Reasoning(effort=effort)))
-        with pytest.raises(UnsupportedFeatureError, match="thinking_format='none'"):
-            lm.build_request(request, stream=True)
+        assert json.loads(lm.build_request(request, stream=True).body)["reasoning_effort"] == wire
+        assert lm.plan(request) == ()
     plain = Request(model="qwen3.5:0.8b", messages=(Message.user("Say ok."),), config=Config(max_tokens=64))
     assert b'"reasoning' not in lm.build_request(plain, stream=True).body
+    studio = OpenAIChatLM(api_key="unused", compat="lmstudio")
+    request = Request(model="qwen3.5:0.8b", messages=(Message.user("Say ok."),), config=Config(max_tokens=64, reasoning=Reasoning(effort="low")))
+    out = adapted(studio, request, stream=True)
+    assert out["config.reasoning"].action == "dropped" and b'"reasoning' not in json.dumps(out["__body__"]).encode()

@@ -249,12 +249,14 @@ def test_async_mirror_shares_credential_resolution(tmp_path):
     assert alm._inner.api_key == "k"
 
 
-def test_reasoning_off_raises_unsupported():
+def test_reasoning_off_is_substituted_with_the_lowest_level():
     # Grok reasoning models have no off switch; api.x.ai accepts
     # thinking={"type": "disabled"} but ignores it (live 2026-09-01:
-    # grok-4.6 still spent 158 reasoning tokens).  A silent paid no-op
-    # on an explicit disable must fail loudly instead (MAP-5).
+    # grok-4.6 still spent 158 reasoning tokens).  MAP-13 (decision
+    # 2026-09-14 §4.2): the lowest level goes instead and is recorded;
+    # the spend is visible in usage.  "refuse" keeps the old behaviour.
     from lm15.types import Config, Message, Reasoning, Request
+    from tests._adapt import adapted, refuses
 
     lm = XaiLM(api_key="xai-test")
     request = Request(
@@ -262,17 +264,20 @@ def test_reasoning_off_raises_unsupported():
         messages=(Message.user("12*13?"),),
         config=Config(reasoning=Reasoning(effort="off")),
     )
-    with pytest.raises(UnsupportedFeatureError, match="reasoning cannot be disabled"):
-        lm.build_request(request, stream=False)
+    out = adapted(lm, request)
+    a = out["config.reasoning.effort"]
+    assert (a.action, a.asked, a.applied) == ("substituted", "off", "low")
+    assert out["__body__"]["reasoning_effort"] == "low"
+    refuses(XaiLM(api_key="xai-test", adaptations="refuse"), request, "config.reasoning.effort")
 
 
-def test_logprobs_raises_unsupported():
+def test_logprobs_is_dropped_and_recorded():
     # docs.x.ai (2026-09-01): "logprobs and top_logprobs are not supported
     # by models grok-4.20 and newer. These fields will be silently ignored
-    # if set."  Verified live 2026-09-01 on grok-4.6: HTTP 200, the choice
-    # carries no logprobs key.  Every served Grok model is 4.20+, so the
-    # inherited chat-dialect mapping would be a guaranteed silent no-op.
+    # if set."  MAP-13: the request is dropped and recorded;
+    # Response.logprobs is then absent (the program sees None, not a crash).
     from lm15.types import Config, Message, Request
+    from tests._adapt import adapted
 
     lm = XaiLM(api_key="xai-test")
     request = Request(
@@ -280,5 +285,8 @@ def test_logprobs_raises_unsupported():
         messages=(Message.user("hello"),),
         config=Config(logprobs=0),
     )
-    with pytest.raises(UnsupportedFeatureError, match="logprobs"):
-        lm.build_request(request, stream=False)
+    out = adapted(lm, request)
+    assert out["config.logprobs"].action == "dropped" and out["config.logprobs"].asked == 0
+    assert "logprobs" not in out["__body__"]
+
+

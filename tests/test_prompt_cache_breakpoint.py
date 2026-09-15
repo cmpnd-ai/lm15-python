@@ -78,29 +78,40 @@ def test_responses_cache_off_sends_nothing() -> None:
     assert "prompt_cache_breakpoint" not in json.dumps(body)
 
 
-def test_responses_breakpoint_on_assistant_message_raises() -> None:
-    with pytest.raises(UnsupportedFeatureError, match="prefix_until_index=1 points at a assistant"):
-        _body(OpenAILM(api_key="k", transport=FakeTransport([])), _req(1))
+def test_responses_breakpoint_on_assistant_message_walks_back() -> None:
+    # MAP-13: "cache up to here" on an ineligible message moves the mark to
+    # the nearest eligible message before it, recorded as substituted.
+    from tests._adapt import adapted
+    out = adapted(OpenAILM(api_key="k", transport=FakeTransport([])), _req(1))
+    a = out["config.cache.prefix_until_index"]
+    assert (a.action, a.asked, a.applied) == ("substituted", 1, 0)
+    assert out["__body__"]["input"][0]["content"][-1]["prompt_cache_breakpoint"] == {"mode": "explicit"}
+    assert "prompt_cache_breakpoint" not in json.dumps(out["__body__"]["input"][1])
 
 
-def test_responses_breakpoint_on_tool_message_raises() -> None:
+def test_responses_breakpoint_on_tool_message_walks_back() -> None:
+    from tests._adapt import adapted
     messages = (
         Message.user("prefix"),
         Message.assistant(tool_call("c1", "f", {})),
         Message.tool(tool_result("c1", "out")),
         Message.user("q"),
     )
-    with pytest.raises(UnsupportedFeatureError, match="points at a tool"):
-        _body(OpenAILM(api_key="k", transport=FakeTransport([])), _req(2, messages=messages))
+    out = adapted(OpenAILM(api_key="k", transport=FakeTransport([])), _req(2, messages=messages))
+    assert out["config.cache.prefix_until_index"].applied == 0
 
 
-def test_responses_breakpoint_needs_trailing_text_block() -> None:
+def test_responses_breakpoint_with_no_eligible_message_is_dropped() -> None:
+    from tests._adapt import adapted, refuses
     messages = (
         Message.user((TextPart("look"), ImagePart(url="https://x/y.png"))),
         Message.user("q"),
     )
-    with pytest.raises(UnsupportedFeatureError, match="last block is not text"):
-        _body(OpenAILM(api_key="k", transport=FakeTransport([])), _req(0, messages=messages))
+    lm = OpenAILM(api_key="k", transport=FakeTransport([]))
+    out = adapted(lm, _req(0, messages=messages))
+    assert out["config.cache.prefix_until_index"].action == "dropped"
+    assert "prompt_cache_breakpoint" not in json.dumps(out["__body__"])
+    refuses(lm, _req(0, messages=messages), "config.cache.prefix_until_index")
 
 
 def test_responses_parse_cache_write_tokens() -> None:
@@ -140,9 +151,10 @@ def test_chat_breakpoint_skipped_when_compat_has_no_cache_control() -> None:
     assert body["messages"][0]["content"] == "A long reusable prefix."
 
 
-def test_chat_breakpoint_on_assistant_message_raises() -> None:
-    with pytest.raises(UnsupportedFeatureError, match="points at a assistant"):
-        _body(OpenAIChatLM(api_key="k", transport=FakeTransport([])), _req(1))
+def test_chat_breakpoint_on_assistant_message_walks_back() -> None:
+    from tests._adapt import adapted
+    out = adapted(OpenAIChatLM(api_key="k", transport=FakeTransport([])), _req(1))
+    assert out["config.cache.prefix_until_index"].applied == 0
 
 
 def test_chat_parse_cache_write_tokens() -> None:

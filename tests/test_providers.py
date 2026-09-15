@@ -527,7 +527,11 @@ def test_anthropic_reasoning_max_tokens_reserves_answer_tokens() -> None:
     payload = json.loads(lm.build_request(request, stream=False).body)
 
     assert payload["thinking"] == {"type": "enabled", "budget_tokens": 1024}
-    assert payload["max_tokens"] == 2048
+    # MAP-13: with no Config.max_tokens the visible cap is the class default
+    # (16384 for an unknown name), recorded as `defaulted`; the wire ceiling
+    # is budget + visible.  The old silent 1024 cut answers off unseen.
+    assert payload["max_tokens"] == 1024 + 16384
+    assert [(a.field, a.action, a.applied) for a in lm.plan(request)] == [("config.max_tokens", "defaulted", 16384)]
 
 
 def test_anthropic_reasoning_max_tokens_adds_explicit_visible_budget() -> None:
@@ -689,12 +693,13 @@ def test_gemini_reasoning_effort_maps_by_model_class() -> None:
     assert thinking_config("gemini-2.5-flash", Reasoning(effort="high", thinking_budget=256)) == {"thinkingBudget": 256}
     assert thinking_config("gemini-3.7-flash", Reasoning(effort="low")) == {"thinkingLevel": "low"}
     assert thinking_config("gemini-2.5-flash", Reasoning(effort="off")) == {"thinkingBudget": 0}
-    with pytest.raises(UnsupportedFeatureError, match="cannot be disabled"):
-        thinking_config("gemini-3.7-flash", Reasoning(effort="off"))
-    with pytest.raises(UnsupportedFeatureError, match="no thinkingLevel"):
-        thinking_config("gemini-3.7-flash", Reasoning(effort="max"))
-    with pytest.raises(UnsupportedFeatureError, match="detail level"):
-        thinking_config("gemini-2.5-flash", Reasoning(effort="low", summary="detailed"))
+    # MAP-13: the 3 class has no honoured off switch → the lowest level, recorded;
+    # above the ceiling → "high"; a summary level → "auto".  Each is on plan().
+    assert thinking_config("gemini-3.7-flash", Reasoning(effort="off")) == {"thinkingLevel": "minimal"}
+    assert thinking_config("gemini-3.7-flash", Reasoning(effort="max")) == {"thinkingLevel": "high"}
+    assert thinking_config("gemini-2.5-flash", Reasoning(effort="low", summary="detailed")) == {"includeThoughts": True, "thinkingBudget": 2048}
+    plan = lm.plan(Request(model="gemini-3.7-flash", messages=(Message.user("x"),), config=Config(reasoning=Reasoning(effort="off"))))
+    assert [(a.field, a.action, a.asked, a.applied) for a in plan] == [("config.reasoning.effort", "substituted", "off", "minimal")]
 
 
 def _reasoning_off_request(model: str = "test-model") -> Request:

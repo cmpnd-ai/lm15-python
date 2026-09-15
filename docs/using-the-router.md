@@ -160,6 +160,34 @@ doors (`azure-chat`, `bedrock-*`, `vertex`) build their URL from a
 resource or region and refuse an entry, pointing at
 `RouterConfig(settings=...)` — see [Cloud hosts](cloud-hosts.md).
 
+## Connections: how long to wait, how many at once
+
+A router owns one transport (one connection pool) shared by every LM it
+builds, so two fields on `RouterConfig` are that router's whole connection
+budget:
+
+```python
+from lm15 import LMRouter, RouterConfig, Timeouts
+
+router = LMRouter(RouterConfig(
+    timeouts=Timeouts(read=1800),   # seconds to wait for the next byte; default 600
+    max_connections=200,            # concurrent connections; default 100
+))
+```
+
+The defaults are the provider SDKs' (connect 10 s; read, write and the
+wait for a free connection 600 s; 100 connections). Raise `read` for a
+slow local model or a long non-streaming answer; raise `max_connections`
+for a wide evaluation. `Timeouts(pool=None)` waits for a free connection
+indefinitely. Pass `transport=` instead to bring your own transport (the
+two fields are then refused: configure the transport you pass).
+
+`router.close()` (or `with LMRouter(...) as router:`) closes every
+connection; the router can be used again afterwards and simply builds a
+fresh transport. `AsyncLMRouter.aclose()` is the async twin — call it on
+the event loop that used the router, before that loop ends (one router
+per loop; an asyncio connection belongs to its loop).
+
 ## Catalogs: aimo and friends
 
 Catalog use is opt-in. Pass a registry and rung 2 lights up:

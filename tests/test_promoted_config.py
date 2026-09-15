@@ -8,6 +8,8 @@ mapping table and the no-silent-drop raises.
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from lm15 import Config, Message, Request, UnsupportedFeatureError
@@ -49,8 +51,12 @@ def test_anthropic_spellings_and_store_raises() -> None:
     body = lm._payload(req(service_tier="standard_only", user_id="u-1"), stream=False)
     assert body["service_tier"] == "standard_only"
     assert body["metadata"] == {"user_id": "u-1"}
-    with pytest.raises(UnsupportedFeatureError, match="store"):
-        lm._payload(req(store=False), stream=False)
+    # MAP-13: store=False is already the case on Anthropic (no stored-response
+    # object exists) → "satisfied"; store=True has nothing to opt into → dropped.
+    from tests._adapt import adapted
+    assert adapted(lm, req(store=False))["config.store"].action == "satisfied"
+    assert adapted(lm, req(store=True))["config.store"].action == "dropped"
+    assert "store" not in adapted(lm, req(store=True))["__body__"]
 
 
 def test_gemini_store_and_service_tier_map_user_id_raises() -> None:
@@ -61,8 +67,12 @@ def test_gemini_store_and_service_tier_map_user_id_raises() -> None:
     assert lm._payload(req(store=False))["store"] is False
     assert lm._payload(req(service_tier="flex"))["serviceTier"] == "flex"
     assert "serviceTier" not in lm._payload(req())
-    with pytest.raises(UnsupportedFeatureError, match="user_id"):
-        lm._payload(req(user_id="u-1"))
+    # MAP-13 (decision 2026-09-14 §4.5): no attribution field → dropped, recorded;
+    # a compliance policy sets adaptations="refuse".
+    from tests._adapt import adapted, refuses
+    out = adapted(lm, req(user_id="u-1"))
+    assert out["config.user_id"].action == "dropped" and "u-1" not in json.dumps(out["__body__"])
+    refuses(lm, req(user_id="u-1"), "config.user_id")
 
 
 def test_extensions_still_win_over_promoted_fields() -> None:

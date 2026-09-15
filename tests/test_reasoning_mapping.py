@@ -24,6 +24,9 @@ def _req(model: str, reasoning: Reasoning | None, **cfg) -> Request:
     return Request(model=model, messages=[Message.user("q")], config=Config(reasoning=reasoning, **cfg))
 
 
+from tests._adapt import adapted as _adapted
+
+
 def _body(lm, request: Request) -> dict:
     return json.loads(lm.build_request(request, stream=False).body)
 
@@ -44,8 +47,9 @@ def test_openai_effort_verbatim_budget_raises() -> None:
         assert _body(lm, _req("gpt-5.6-sol", Reasoning(effort=eff)))["reasoning"] == {"effort": eff}
     assert _body(lm, _req("gpt-5.6-sol", Reasoning(effort="off")))["reasoning"] == {"effort": "none"}
     assert _body(lm, _req("gpt-5.6-sol", Reasoning(effort="low", summary="detailed")))["reasoning"] == {"effort": "low", "summary": "detailed"}
-    with pytest.raises(UnsupportedFeatureError, match="thinking_budget"):
-        _body(lm, _req("gpt-5.6-sol", Reasoning(effort="low", thinking_budget=1024)))
+    # MAP-13: no budget on this wire; effort carries the intent — dropped, recorded.
+    out = _adapted(lm, _req("gpt-5.6-sol", Reasoning(effort="low", thinking_budget=1024)))
+    assert out["config.reasoning.thinking_budget"].action == "dropped" and out["__body__"]["reasoning"] == {"effort": "low"}
 
 
 def test_openai_reasoning_item_round_trip() -> None:
@@ -78,10 +82,11 @@ def test_openai_unsigned_thinking_replays_as_text() -> None:
 def test_chat_dialect_effort_summary_and_groq_visibility() -> None:
     lm = OpenAIChatLM(api_key="k", transport=FakeTransport([]))
     assert _body(lm, _req("gpt-5.6-sol", Reasoning(effort="max")))["reasoning_effort"] == "max"
-    with pytest.raises(UnsupportedFeatureError, match="thinking_budget"):
-        _body(lm, _req("gpt-5.6-sol", Reasoning(effort="low", thinking_budget=100)))
-    with pytest.raises(UnsupportedFeatureError, match="detail level"):
-        _body(lm, _req("gpt-5.6-sol", Reasoning(effort="low", summary="concise")))
+    # MAP-13: budget dropped (effort carries the intent); a summary level substituted with "auto".
+    out = _adapted(lm, _req("gpt-5.6-sol", Reasoning(effort="low", thinking_budget=100)))
+    assert out["config.reasoning.thinking_budget"].action == "dropped" and out["__body__"]["reasoning_effort"] == "low"
+    out = _adapted(lm, _req("gpt-5.6-sol", Reasoning(effort="low", summary="concise")))
+    assert out["config.reasoning.summary"].applied == "auto"
     groq = OpenAIChatLM(api_key="k", transport=FakeTransport([]), compat="groq")
     assert _body(groq, _req("openai/gpt-oss-20b", Reasoning(effort="low", summary="auto")))["reasoning_format"] == "parsed"
     assert "reasoning_format" not in _body(groq, _req("openai/gpt-oss-20b", Reasoning(effort="low")))
@@ -97,12 +102,14 @@ def test_anthropic_adaptive_class() -> None:
     b = _body(lm, _req("claude-sonnet-5", Reasoning(effort="xhigh"), max_tokens=500))
     assert b["thinking"] == {"type": "adaptive"} and b["output_config"] == {"effort": "xhigh"} and b["max_tokens"] == 500
     assert "thinking" not in _body(lm, _req("claude-sonnet-5", Reasoning(effort="off")))
-    with pytest.raises(UnsupportedFeatureError, match="thinking_budget"):
-        _body(lm, _req("claude-sonnet-5", Reasoning(effort="high", thinking_budget=2048)))
-    with pytest.raises(UnsupportedFeatureError, match="minimal"):
-        _body(lm, _req("claude-sonnet-5", Reasoning(effort="minimal")))
-    with pytest.raises(UnsupportedFeatureError, match="detail level"):
-        _body(lm, _req("claude-sonnet-5", Reasoning(effort="high", summary="detailed")))
+    # MAP-13 on the adaptive class: the budget is dropped (rejected by the API, effort
+    # carries the intent), minimal is clamped to the floor, a summary level becomes auto.
+    out = _adapted(lm, _req("claude-sonnet-5", Reasoning(effort="high", thinking_budget=2048)))
+    assert out["config.reasoning.thinking_budget"].action == "dropped" and out["__body__"]["output_config"] == {"effort": "high"}
+    out = _adapted(lm, _req("claude-sonnet-5", Reasoning(effort="minimal")))
+    assert out["config.reasoning.effort"].applied == "low" and out["__body__"]["output_config"] == {"effort": "low"}
+    out = _adapted(lm, _req("claude-sonnet-5", Reasoning(effort="high", summary="detailed")))
+    assert out["config.reasoning.summary"].applied == "auto"
     # summary=auto is satisfied: thinking blocks are always returned
     assert "summary" not in json.dumps(_body(lm, _req("claude-sonnet-5", Reasoning(effort="high", summary="auto"))))
     # response_format and effort share output_config
@@ -128,20 +135,24 @@ def test_gemini_two_classes() -> None:
     assert tc("gemini-2.5-flash", Reasoning(effort="off")) == {"thinkingBudget": 0}
     assert tc("gemini-3.7-flash", Reasoning(effort="medium", summary="auto")) == {"includeThoughts": True, "thinkingLevel": "medium"}
     assert tc("gemini-3.7-flash", Reasoning(effort="medium", thinking_budget=512)) == {"thinkingBudget": 512}
+    # MAP-13: above the ceiling clamps to "high"; off on the 3 class (no honoured
+    # off switch) substitutes the lowest level — both recorded.
     for eff in ("xhigh", "max"):
-        with pytest.raises(UnsupportedFeatureError, match="no thinkingLevel"):
-            tc("gemini-3.7-flash", Reasoning(effort=eff))
-    with pytest.raises(UnsupportedFeatureError, match="cannot be disabled"):
-        tc("gemini-3.7-flash", Reasoning(effort="off"))
+        out = _adapted(lm, _req("gemini-3.7-flash", Reasoning(effort=eff)))
+        assert out["config.reasoning.effort"].applied == "high"
+        assert out["__body__"]["generationConfig"]["thinkingConfig"] == {"thinkingLevel": "high"}
+    out = _adapted(lm, _req("gemini-3.7-flash", Reasoning(effort="off")))
+    assert (out["config.reasoning.effort"].action, out["config.reasoning.effort"].applied) == ("substituted", "minimal")
+    assert out["__body__"]["generationConfig"]["thinkingConfig"] == {"thinkingLevel": "minimal"}
 
 
 # ─── xAI ─────────────────────────────────────────────────────────────
 
-def test_xai_effort_verbatim_off_raises() -> None:
+def test_xai_effort_verbatim_off_substitutes_low() -> None:
     lm = XaiLM(api_key="k", transport=FakeTransport([]))
     assert _body(lm, _req("grok-4.6", Reasoning(effort="xhigh")))["reasoning_effort"] == "xhigh"
-    with pytest.raises(UnsupportedFeatureError, match="cannot be disabled"):
-        _body(lm, _req("grok-4.6", Reasoning(effort="off")))
+    out = _adapted(lm, _req("grok-4.6", Reasoning(effort="off")))
+    assert out["config.reasoning.effort"].applied == "low" and out["__body__"]["reasoning_effort"] == "low"
 
 
 # ─── Gemini 3.x: the answer text carries the turn's signature ────────

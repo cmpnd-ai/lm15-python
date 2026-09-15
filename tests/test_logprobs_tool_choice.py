@@ -144,10 +144,14 @@ def test_gemini_logprobs_payload() -> None:
     assert lm._payload(req(logprobs=4))["generationConfig"]["logprobs"] == 4
 
 
-def test_anthropic_logprobs_raises() -> None:
+def test_anthropic_logprobs_is_dropped_and_recorded() -> None:
+    # MAP-13 (decision 2026-09-14 §4.1): no logprobs on the Messages API →
+    # dropped, recorded; Response.logprobs is then absent.
+    from tests._adapt import adapted, refuses
     lm = AnthropicLM(api_key="k", transport=FakeTransport([]))
-    with pytest.raises(UnsupportedFeatureError, match="logprobs"):
-        lm._payload(req(logprobs=0), stream=False)
+    out = adapted(lm, req(logprobs=0))
+    assert out["config.logprobs"].action == "dropped" and "logprobs" not in out["__body__"]
+    refuses(lm, req(logprobs=0), "config.logprobs")
 
 
 # ─── Response mapping: logprobs ──────────────────────────────────────
@@ -298,10 +302,15 @@ def test_anthropic_full_allowlist_is_no_restriction() -> None:
     assert body["tool_choice"] == {"type": "auto"}
 
 
-def test_anthropic_proper_subset_raises() -> None:
+def test_anthropic_proper_subset_sends_only_the_allowed_tools() -> None:
+    # MAP-13 (was a MAP-8 refusal): the Messages API cannot restrict to a
+    # subset; sending only the allowed tools IS the allowlist — client_side.
+    from tests._adapt import adapted
     lm = AnthropicLM(api_key="k", transport=FakeTransport([]))
-    with pytest.raises(UnsupportedFeatureError, match="subset"):
-        lm._payload(tooled([WEATHER, SEARCH], mode="auto", allowed=("get_weather",)), stream=False)
+    out = adapted(lm, tooled([WEATHER, SEARCH], mode="auto", allowed=("get_weather",)))
+    assert out["config.tool_choice.allowed"].action == "client_side"
+    assert [t["name"] for t in out["__body__"]["tools"]] == ["get_weather"]
+    assert out["__body__"]["tool_choice"] == {"type": "auto"}
 
 
 def test_gemini_builtin_forcing_raises() -> None:

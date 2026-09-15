@@ -198,14 +198,19 @@ class TestBinding:
         assert body(Config(max_tokens=100, reasoning=Reasoning(effort="off")))["thinking"] == {"type": "disabled"}
         b = body(Config(max_tokens=100, reasoning=Reasoning(effort="low")))
         assert b["thinking"] == {"type": "enabled"} and b["output_config"] == {"effort": "low"} and b["max_tokens"] == 100
-        # Silent cells refused before the wire (guide--anthropic-api.md; live 2026-09-03).
-        for cfg in (
-            Config(reasoning=Reasoning(effort="low", thinking_budget=4096)),   # budget_tokens ignored
-            Config(response_format={"type": "json_schema", "name": "x", "schema": {"type": "object"}}),  # schema ignored
-            Config(tool_choice=ToolChoice(mode="auto", parallel=False)),      # disable_parallel_tool_use ignored
+        # Silent cells (guide--anthropic-api.md; live 2026-09-03): MAP-13 drops
+        # the setting and records it — the record is the visibility the old
+        # refusal existed for; "refuse" keeps the refusal.
+        from tests._adapt import adapted, refuses
+        for cfg, field in (
+            (Config(reasoning=Reasoning(effort="low", thinking_budget=4096)), "config.reasoning.thinking_budget"),  # budget_tokens ignored
+            (Config(response_format={"type": "json_schema", "name": "x", "schema": {"type": "object"}}), "config.response_format"),  # schema ignored
+            (Config(tool_choice=ToolChoice(mode="auto", parallel=False)), "config.tool_choice.parallel"),      # disable_parallel_tool_use ignored
         ):
-            with pytest.raises(UnsupportedFeatureError, match="deepseek-anthropic: .*ignore"):
-                body(cfg)
+            req = Request(model="deepseek-v4-flash", messages=say, tools=(tool,), config=cfg)
+            assert adapted(lm, req)[field].action == "dropped"
+            refuses(lm, req, field)
+        assert "disable_parallel_tool_use" not in body(Config(tool_choice=ToolChoice(mode="auto", parallel=False)))["tool_choice"]
         # claude-* is silently served by a DeepSeek model: refuse before the wire.
         with pytest.raises(UnsupportedModelError, match="silently substituted"):
             body(Config(max_tokens=10), model="claude-opus-4-1")
@@ -266,16 +271,24 @@ class TestBinding:
         from lm15 import Config, FunctionTool, Message, Request, ToolChoice
         from lm15.errors import UnsupportedFeatureError
 
+        from tests._adapt import adapted
         tool = FunctionTool(name="w", description="d", parameters={"type": "object", "properties": {}})
         lm = LMRouter(RouterConfig(env={"ZAI_API_KEY": "k"})).lm("zai:glm-5.3-flash")
-        for cfg in (
-            Config(tool_choice=ToolChoice(mode="required")),
-            Config(tool_choice=ToolChoice(mode="none")),
-            Config(tool_choice=ToolChoice(mode="auto", allowed=("w",))),
-            Config(response_format={"type": "json_schema", "name": "x", "schema": {"type": "object"}}),
-        ):
-            with pytest.raises(UnsupportedFeatureError, match="zai: .*silently ignored"):
-                lm.build_request(Request(model="glm-5.3-flash", messages=(Message.user("x"),), tools=(tool,), config=cfg), stream=False)
+        def req(cfg):
+            return Request(model="glm-5.3-flash", messages=(Message.user("x"),), tools=(tool,), config=cfg)
+        # MAP-13: "required" cannot be reproduced client-side and the program
+        # depends on the call — still a refusal, naming its field.
+        with pytest.raises(UnsupportedFeatureError, match="zai: .*silently ignored") as err:
+            lm.build_request(req(Config(tool_choice=ToolChoice(mode="required"))), stream=False)
+        assert err.value.feature == "config.tool_choice.mode"
+        # "none" and an allowlist have a client-side form: no tools / only those tools.
+        out = adapted(lm, req(Config(tool_choice=ToolChoice(mode="none"))))
+        assert out["config.tool_choice.mode"].action == "client_side" and "tools" not in out["__body__"]
+        out = adapted(lm, req(Config(tool_choice=ToolChoice(mode="auto", allowed=("w",)))))
+        assert out["config.tool_choice.allowed"].action == "client_side" and out["__body__"]["tool_choice"] == "auto"
+        # json_schema is accepted and ignored by the server: dropped and recorded.
+        out = adapted(lm, req(Config(response_format={"type": "json_schema", "name": "x", "schema": {"type": "object"}})))
+        assert out["config.response_format"].action == "dropped" and "response_format" not in out["__body__"]
         # The honoured forms still go out.
         for cfg in (Config(tool_choice=ToolChoice(mode="auto")), Config(response_format={"type": "json_object"})):
             lm.build_request(Request(model="glm-5.3-flash", messages=(Message.user("x"),), tools=(tool,), config=cfg), stream=False)
@@ -334,17 +347,23 @@ class TestMoonshotai:
         assert "thinking" not in absent and "reasoning_effort" not in absent
         assert absent["max_completion_tokens"] == 50 and "max_tokens" not in absent
 
-    def test_effort_words_without_a_native_level_raise(self) -> None:
+    def test_effort_words_without_a_native_level_are_clamped(self) -> None:
         # Live 2026-09-03: kimi-k3 answered HTTP 200 to `medium` AND to `bogus`
         # (17 reasoning tokens each) — the server validates nothing, so a word
-        # outside low|high|max would downgrade silently (MAP-7 rule 2).
+        # outside low|high|max would downgrade silently.  MAP-13: the word is
+        # clamped to the nearest declared level (a tie goes lower) and
+        # recorded; "refuse" keeps the old MAP-7 rule 2 refusal.
         from lm15 import Config, Message, Reasoning, Request
-        from lm15.errors import UnsupportedFeatureError
+        from tests._adapt import adapted, refuses
 
         lm = LMRouter(RouterConfig(env={"MOONSHOTAI_API_KEY": "k"})).lm("moonshotai:kimi-k3")
-        for word in ("minimal", "medium", "xhigh"):
-            with pytest.raises(UnsupportedFeatureError, match="moonshotai: .*accepted silently"):
-                lm.build_request(Request(model="kimi-k3", messages=(Message.user("x"),), config=Config(reasoning=Reasoning(effort=word))), stream=False)
+        for word, nearest in (("minimal", "low"), ("medium", "low"), ("xhigh", "high")):
+            req = Request(model="kimi-k3", messages=(Message.user("x"),), config=Config(reasoning=Reasoning(effort=word)))
+            out = adapted(lm, req)
+            a = out["config.reasoning.effort"]
+            assert (a.action, a.asked, a.applied) == ("clamped", word, nearest)
+            assert out["__body__"]["reasoning_effort"] == nearest
+            refuses(lm, req, "config.reasoning.effort")
         # The knob is per server: the plain dialect still passes any word through.
         groq = LMRouter(RouterConfig(env={"GROQ_API_KEY": "k"})).lm("groq:m")
         groq.build_request(Request(model="m", messages=(Message.user("x"),), config=Config(reasoning=Reasoning(effort="medium"))), stream=False)
@@ -425,11 +444,21 @@ class TestMoonshotai:
         # An unsigned thinking part goes back as a thinking block, not text (signature is "" on this server).
         replay = body(Config(max_tokens=50), msgs=(Message.user("x"), Message.assistant((ThinkingPart(text="hmm"), TextPart(text="ok"))), Message.user("y")))
         assert replay["messages"][1]["content"][0] == {"type": "thinking", "thinking": "hmm"}
-        # Refusals: silent cells (live 2026-09-03).
-        for cfg in (Config(max_tokens=50, reasoning=Reasoning(effort="medium")), Config(max_tokens=50, temperature=0.5), Config(max_tokens=50, top_k=1),
-                    Config(max_tokens=50, tool_choice=ToolChoice(mode="auto", parallel=False))):
-            with pytest.raises(UnsupportedFeatureError, match="moonshotai-anthropic: "):
-                body(cfg)
+        # Silent cells (live 2026-09-03): MAP-13 adapts and records, never sends the ignored value.
+        from tests._adapt import adapted, refuses
+        for cfg, field, action, wire_key in (
+            (Config(max_tokens=50, reasoning=Reasoning(effort="medium")), "config.reasoning.effort", "clamped", None),
+            (Config(max_tokens=50, temperature=0.5), "config.temperature", "dropped", "temperature"),
+            (Config(max_tokens=50, top_k=1), "config.top_k", "dropped", "top_k"),
+            (Config(max_tokens=50, tool_choice=ToolChoice(mode="auto", parallel=False)), "config.tool_choice.parallel", "dropped", None),
+        ):
+            req = Request(model="kimi-k3", messages=(Message.user("x"),), config=cfg)
+            out = adapted(lm, req)
+            assert out[field].action == action
+            if wire_key:
+                assert wire_key not in out["__body__"]
+            refuses(lm, req, field)
+        assert adapted(lm, Request(model="kimi-k3", messages=(Message.user("x"),), config=Config(max_tokens=50, reasoning=Reasoning(effort="medium"))))["__body__"]["output_config"] == {"effort": "low"}
         # Plain Anthropic is untouched: unsigned thinking still replays as text there, sampling goes out.
         plain_lm = LMRouter(RouterConfig(env={"ANTHROPIC_API_KEY": "k"})).lm("anthropic:claude-sonnet-4-5")
         out = json.loads(plain_lm.build_request(Request(model="claude-sonnet-4-5", messages=(Message.user("x"), Message.assistant((ThinkingPart(text="hmm"),)), Message.user("y")), config=Config(max_tokens=50, temperature=0.5)), stream=False).body)
@@ -563,10 +592,12 @@ class TestMeta:
         assert body(Config(max_tokens=100, reasoning=Reasoning(effort="off")))["thinking"] == {"type": "disabled"}
         # Absence stays absence (the server reasons by default either way).
         assert "thinking" not in body(Config(max_tokens=100))
-        # minimal goes verbatim (the server answers 400 — live 2026-09-03); a budget is a silent no-op → refused.
+        # minimal goes verbatim (the server answers 400 — live 2026-09-03); a budget is a
+        # silent no-op there → MAP-13 drops it and records (effort carries the intent).
+        from tests._adapt import adapted
         assert body(Config(max_tokens=100, reasoning=Reasoning(effort="minimal")))["output_config"] == {"effort": "minimal"}
-        with pytest.raises(UnsupportedFeatureError, match="without translating"):
-            body(Config(max_tokens=100, reasoning=Reasoning(effort="low", thinking_budget=2048)))
+        out = adapted(lm, Request(model="muse-spark-1.3", messages=say, config=Config(max_tokens=100, reasoning=Reasoning(effort="low", thinking_budget=2048))))
+        assert out["config.reasoning.thinking_budget"].action == "dropped" and out["__body__"]["output_config"] == {"effort": "low"}
         # The bearer header, not x-api-key.
         headers = {k.lower(): v for k, v in lm.build_request(Request(model="m", messages=say, config=Config(max_tokens=10)), stream=False).headers}
         assert headers["authorization"].startswith("Bearer ") and "x-api-key" not in headers

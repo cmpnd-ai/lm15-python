@@ -121,13 +121,17 @@ def test_anthropic_history_marks_last_block_stable_marks_system() -> None:
     assert body["messages"][-1]["content"][-1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
 
 
-def test_anthropic_off_sends_nothing_key_and_resource_raise() -> None:
+def test_anthropic_off_sends_nothing_key_is_dropped_resource_raises() -> None:
+    from tests._adapt import adapted
     lm = AnthropicLM(api_key="k", transport=FakeTransport([]))
     assert "cache_control" not in json.dumps(_body(lm, _req("claude-sonnet-5", CacheConfig(mode="off"))))
-    with pytest.raises(UnsupportedFeatureError, match="cache.key"):
-        _body(lm, _req("claude-sonnet-5", CacheConfig(key="k")))
-    with pytest.raises(UnsupportedFeatureError, match="cache.resource"):
+    # MAP-13: a best-effort affinity hint with no home → dropped, recorded.
+    out = adapted(lm, _req("claude-sonnet-5", CacheConfig(key="k")))
+    assert out["config.cache.key"].action == "dropped"
+    # A stored object that does not exist here → still a refusal (rule 4b), naming its field.
+    with pytest.raises(UnsupportedFeatureError, match="cache.resource") as err:
         _body(lm, _req("claude-sonnet-5", CacheConfig(resource="r")))
+    assert err.value.feature == "config.cache.resource"
 
 
 # ─── Gemini ──────────────────────────────────────────────────────────
@@ -139,12 +143,14 @@ def test_gemini_prefix_intents_fall_back_to_automatic_tier() -> None:
         assert _body(lm, _req("gemini-2.5-flash", cfg)) == plain  # nothing added, nothing hidden
 
 
-def test_gemini_key_and_retention_raise() -> None:
+def test_gemini_key_and_retention_are_dropped_and_recorded() -> None:
+    from tests._adapt import adapted
     lm = GeminiLM(api_key="k", transport=FakeTransport([]))
-    with pytest.raises(UnsupportedFeatureError, match="cache.key"):
-        _body(lm, _req("gemini-2.5-flash", CacheConfig(key="k")))
-    with pytest.raises(UnsupportedFeatureError, match="cache.retention"):
-        _body(lm, _req("gemini-2.5-flash", CacheConfig(retention="long")))
+    plain = _body(lm, _req("gemini-2.5-flash", None))
+    out = adapted(lm, _req("gemini-2.5-flash", CacheConfig(key="k")))
+    assert out["config.cache.key"].action == "dropped" and out["__body__"] == plain
+    out = adapted(lm, _req("gemini-2.5-flash", CacheConfig(retention="long")))
+    assert out["config.cache.retention"].action == "dropped" and out["__body__"] == plain
 
 
 def test_gemini_resource_sends_suffix_only_and_no_system_or_tools() -> None:

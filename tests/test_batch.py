@@ -93,10 +93,18 @@ def test_anthropic_submit_positional_custom_ids() -> None:
     assert job.created_at == "2026-08-31T19:22:09Z"
 
 
-def test_anthropic_label_raises_honestly() -> None:
+def test_anthropic_label_is_dropped_and_refused_under_strict() -> None:
+    # MAP-13: the Message Batches body has no metadata field; the label is a
+    # convenience (correlate by id) → dropped.  The batch path opens no
+    # adaptation scope, so the drop is recorded nowhere under "note" (stated
+    # trade-off: batch is a provisional surface); "refuse" still refuses.
     lm = AnthropicLM(api_key="k", transport=FakeTransport([]))
-    with pytest.raises(UnsupportedFeatureError, match="label"):
-        lm.batch_submit(BatchRequest(requests=(req(),), label="nightly"))
+    wire = lm._batch_submit_request(BatchRequest(requests=(req(),), label="nightly"), None)
+    assert b"nightly" not in wire.body
+    strict = AnthropicLM(api_key="k", transport=FakeTransport([]), adaptations="refuse")
+    with pytest.raises(UnsupportedFeatureError, match="label") as err:
+        strict.batch_submit(BatchRequest(requests=(req(),), label="nightly"))
+    assert err.value.feature == "label"
 
 
 def test_anthropic_ended_status_splits_on_counts() -> None:

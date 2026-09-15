@@ -101,12 +101,15 @@ class StreamAccumulator:
     part_continuation: dict[int, list[ContinuationState]] = field(default_factory=dict)
     logprob_seq: list[TokenLogprob] = field(default_factory=list)
     provider_data: dict[str, Any] | None = None
+    adaptations: tuple = ()
 
     def push(self, event: StreamEvent) -> None:
         """Fold one canonical stream event into the accumulated state."""
         if event.type == "start":
             self.started_id = event.id or self.started_id
             self.started_model = event.model or self.started_model
+            if event.adaptations:
+                self.adaptations = event.adaptations
             return
 
         if event.type == "end":
@@ -260,6 +263,7 @@ class StreamAccumulator:
             usage=self.usage or Usage(),
             logprobs=tuple(self.logprob_seq) if self.logprob_seq else None,
             provider_data=self.provider_data,
+            adaptations=self.adaptations,
         )
 
 
@@ -670,7 +674,7 @@ def response_to_events(response: Response) -> Iterator[StreamEvent]:
     response contains a valid Part that has no Delta representation, this
     function raises instead of silently dropping content.
     """
-    yield StreamStartEvent(id=response.id, model=response.model)
+    yield StreamStartEvent(id=response.id, model=response.model, adaptations=response.adaptations)
     # Response.logprobs is message-level; the delta vocabulary carries
     # logprobs on text deltas.  Emitting the whole sequence on the first
     # text delta makes Response -> events -> Response lossless.
@@ -749,6 +753,14 @@ def response_to_events(response: Response) -> Iterator[StreamEvent]:
     )
 
 
+def _stamp_start(event: StreamStartEvent, adaptations: tuple) -> StreamStartEvent:
+    if not adaptations or event.adaptations:
+        return event
+    from dataclasses import replace
+
+    return replace(event, adaptations=tuple(adaptations))
+
+
 class _EndProviderData:
     """MAP-3 / D9: which adapter end event's ``provider_data`` the merged
     end carries.  Rank 2: a frame that supplied usage.  Rank 1: a frame that
@@ -772,7 +784,7 @@ class _EndProviderData:
 
 
 def coalesce_stream(
-    events: Iterator[StreamEvent], *, model: str | None = None
+    events: Iterator[StreamEvent], *, model: str | None = None, adaptations: tuple = ()
 ) -> Iterator[StreamEvent]:
     """Enforce MAP-3 and MAP-4: one final StreamEndEvent, one leading StreamStartEvent.
 
@@ -795,12 +807,15 @@ def coalesce_stream(
     start passes through; duplicates after the first are dropped.  Error
     events never force a start: a stream that fails to open has no start.
 
+    ``adaptations`` (MAP-13) are stamped on the start event, provider-sent
+    or synthesized: they are known before the first byte.
+
     See docs/mapping-rules.md MAP-3 and MAP-4.
     """
     primary = None
     ended = None
     try:
-        for event in _coalesce_stream(events, model=model):
+        for event in _coalesce_stream(events, model=model, adaptations=adaptations):
             if event.type == "end":
                 ended = event
             yield event
@@ -813,7 +828,7 @@ def coalesce_stream(
         _close_events(events, primary, ended)
 
 
-def _coalesce_stream(events: Iterator[StreamEvent], *, model: str | None) -> Iterator[StreamEvent]:
+def _coalesce_stream(events: Iterator[StreamEvent], *, model: str | None, adaptations: tuple = ()) -> Iterator[StreamEvent]:
     started = False
     saw_end = False
     finish_reason = None
@@ -824,7 +839,7 @@ def _coalesce_stream(events: Iterator[StreamEvent], *, model: str | None) -> Ite
             if started:
                 continue
             started = True
-            yield event
+            yield _stamp_start(event, adaptations)
             continue
         if event.type == "end":
             saw_end = True
@@ -836,11 +851,11 @@ def _coalesce_stream(events: Iterator[StreamEvent], *, model: str | None) -> Ite
             continue
         if not started and event.type == "delta":
             started = True
-            yield StreamStartEvent(model=model)
+            yield StreamStartEvent(model=model, adaptations=adaptations)
         yield event
     if saw_end:
         if not started:
-            yield StreamStartEvent(model=model)
+            yield StreamStartEvent(model=model, adaptations=adaptations)
         yield StreamEndEvent(
             finish_reason=finish_reason,
             usage=usage,
@@ -849,7 +864,7 @@ def _coalesce_stream(events: Iterator[StreamEvent], *, model: str | None) -> Ite
 
 
 async def acoalesce_stream(
-    events: "AsyncIterator[StreamEvent]", *, model: str | None = None
+    events: "AsyncIterator[StreamEvent]", *, model: str | None = None, adaptations: tuple = ()
 ) -> "AsyncIterator[StreamEvent]":
     """Async mirror of :func:`coalesce_stream` — same MAP-3/MAP-4 semantics.
 
@@ -863,7 +878,7 @@ async def acoalesce_stream(
     primary = None
     ended = None
     try:
-        async for event in _acoalesce_stream(events, model=model):
+        async for event in _acoalesce_stream(events, model=model, adaptations=adaptations):
             if event.type == "end":
                 ended = event
             yield event
@@ -874,7 +889,7 @@ async def acoalesce_stream(
         await _aclose_events(events, primary, ended)
 
 
-async def _acoalesce_stream(events: AsyncIterator[StreamEvent], *, model: str | None) -> AsyncIterator[StreamEvent]:
+async def _acoalesce_stream(events: AsyncIterator[StreamEvent], *, model: str | None, adaptations: tuple = ()) -> AsyncIterator[StreamEvent]:
     started = False
     saw_end = False
     finish_reason = None
@@ -885,7 +900,7 @@ async def _acoalesce_stream(events: AsyncIterator[StreamEvent], *, model: str | 
             if started:
                 continue
             started = True
-            yield event
+            yield _stamp_start(event, adaptations)
             continue
         if event.type == "end":
             saw_end = True
@@ -897,16 +912,147 @@ async def _acoalesce_stream(events: AsyncIterator[StreamEvent], *, model: str | 
             continue
         if not started and event.type == "delta":
             started = True
-            yield StreamStartEvent(model=model)
+            yield StreamStartEvent(model=model, adaptations=adaptations)
         yield event
     if saw_end:
         if not started:
-            yield StreamStartEvent(model=model)
+            yield StreamStartEvent(model=model, adaptations=adaptations)
         yield StreamEndEvent(
             finish_reason=finish_reason,
             usage=usage,
             provider_data=end_data.value,
         )
+
+
+# ─── MAP-13 client-side stop ─────────────────────────────────────────
+#
+# A wire with no stop field (OpenAI Responses) gets the sequence applied
+# here: the visible text is cut at the first occurrence and the finish
+# reason becomes "stop".  On the complete path the model ran on and every
+# token was billed (the adaptation note says so).  On the stream path the
+# source is closed at the cut, which ends generation on providers that
+# honour a disconnect; the end event then carries no usage (the provider
+# never sent it) — stated in the note, and the price of not paying for
+# text the caller asked not to receive.
+
+
+def _first_stop(text: str, stop: tuple[str, ...]) -> tuple[int, str] | None:
+    best: tuple[int, str] | None = None
+    for seq in stop:
+        if not seq:
+            continue
+        idx = text.find(seq)
+        if idx >= 0 and (best is None or idx < best[0]):
+            best = (idx, seq)
+    return best
+
+
+def apply_client_side_stop(response: Response, stop: tuple[str, ...]) -> Response:
+    """Cut the response's text parts at the first stop sequence (in
+    document order across parts); parts after the cut are removed."""
+    from dataclasses import replace
+
+    if not stop:
+        return response
+    parts: list[Part] = []
+    cut = False
+    for part in response.message.parts:
+        if cut:
+            break
+        if isinstance(part, TextPart):
+            hit = _first_stop(part.text, stop)
+            if hit is not None:
+                parts.append(replace(part, text=part.text[: hit[0]]))
+                cut = True
+                continue
+        parts.append(part)
+    if not cut:
+        return response
+    if not parts:
+        parts = [TextPart(text="")]
+    message = replace(response.message, parts=tuple(parts))
+    return replace(response, message=message, finish_reason="stop")
+
+
+class _StopCutter:
+    """Streaming text cutter.  Withholds the last ``len(longest stop) - 1``
+    characters of each text part so a sequence split across two deltas is
+    still caught; releases them when a later delta proves no match."""
+
+    def __init__(self, stop: tuple[str, ...]) -> None:
+        self.stop = tuple(s for s in stop if s)
+        self.hold = max((len(s) for s in self.stop), default=1) - 1
+        self.pending: dict[int, str] = {}
+        self.cut = False
+
+    def feed(self, part_index: int, text: str) -> str | None:
+        """Text safe to emit now, or None once the stop has been hit
+        (the emitted prefix comes in the same call that sets ``cut``)."""
+        buf = self.pending.get(part_index, "") + text
+        hit = _first_stop(buf, self.stop)
+        if hit is not None:
+            self.pending[part_index] = ""
+            self.cut = True
+            return buf[: hit[0]]
+        keep = buf[len(buf) - self.hold:] if self.hold else ""
+        emit = buf[: len(buf) - len(keep)]
+        self.pending[part_index] = keep
+        return emit
+
+    def flush(self) -> list[tuple[int, str]]:
+        out = [(i, t) for i, t in self.pending.items() if t]
+        self.pending.clear()
+        return out
+
+
+def _cut_events(cutter: _StopCutter, event: StreamEvent):
+    """Yield the events to emit for one incoming event; sets cutter.cut."""
+    if event.type == "delta" and isinstance(event.delta, TextDelta):
+        emit = cutter.feed(event.delta.part_index, event.delta.text)
+        if emit:
+            yield StreamDeltaEvent(delta=TextDelta(part_index=event.delta.part_index, text=emit))
+        return
+    if event.type == "end":
+        for idx, text in cutter.flush():
+            yield StreamDeltaEvent(delta=TextDelta(part_index=idx, text=text))
+    yield event
+
+
+def truncate_stream_at_stop(events: Iterator[StreamEvent], stop: tuple[str, ...]) -> Iterator[StreamEvent]:
+    cutter = _StopCutter(stop)
+    if not cutter.stop:
+        yield from events
+        return
+    try:
+        for event in events:
+            for out in _cut_events(cutter, event):
+                yield out
+            if cutter.cut:
+                yield StreamEndEvent(finish_reason="stop")
+                return
+    finally:
+        close = getattr(events, "close", None)
+        if close is not None:
+            close()
+
+
+async def atruncate_stream_at_stop(events: AsyncIterator[StreamEvent], stop: tuple[str, ...]) -> AsyncIterator[StreamEvent]:
+    cutter = _StopCutter(stop)
+    if not cutter.stop:
+        async for event in events:
+            yield event
+        return
+    try:
+        async for event in events:
+            for out in _cut_events(cutter, event):
+                yield out
+            if cutter.cut:
+                yield StreamEndEvent(finish_reason="stop")
+                return
+    finally:
+        aclose = getattr(events, "aclose", None)
+        if aclose is not None:
+            await aclose()
 
 
 # ─── Internal helpers ────────────────────────────────────────────────

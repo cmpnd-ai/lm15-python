@@ -2,6 +2,90 @@
 
 ## Unreleased
 
+**MAP-13: adapt freely, never invisibly; refuse only when a guess could
+hurt** (`lm15-contract/docs/mapping-rules.md` MAP-13, ratified
+2026-09-14; audit in `changes/2026-09-14-adapt-visibly.md`; guide in
+`docs/adaptations.md`). A setting a wire cannot take as asked is now
+adapted — dropped, clamped, substituted, applied client-side, noted as
+already satisfied, or defaulted — and RECORDED on `Response.adaptations`
+and `StreamStartEvent.adaptations` (`Adaptation(field, action, reason,
+asked, applied)`); `lm.plan(request)` / `router.plan(request)` preview
+the record with no network. `adaptations="note" | "silent" | "refuse"`
+on every LM constructor and on `RouterConfig`; `"refuse"` is the
+pre-change strictness. Roughly twenty refusals became adaptations:
+`top_k` on the OpenAI wires, `seed`/penalties on Anthropic, `temperature
+> 1` on Anthropic (clamped to 1.0), `stop` on the Responses wire
+(honoured by streaming and closing at the cut, on `complete()` too —
+nothing past the sequence is billed; usage is then not reported), thinking-summary levels, an effort word with no
+level (nearest), a budget beside an effort, `reasoning=off` on Gemini 3
+and Grok (the lowest level), tool allowlists on Anthropic/xAI/Z.AI (only
+those tools are sent), `parallel=False` on Gemini, `cache.key` /
+`cache.retention` where absent, `store` on Anthropic (`false` satisfied,
+`true` dropped), `user_id` on Gemini, `logprobs` on Anthropic/xAI, a
+cache breakpoint on an ineligible message (walks back), and every "this
+server silently ignores X" refusal. Refusals that stay (a part with no
+wire slot, `cache.resource` where no stored tier exists, a builtin tool
+the wire cannot run, `n > 1`, a budget with no effort) carry
+`UnsupportedFeatureError.feature` = the config path.
+
+**`Config.seed`, `Config.frequency_penalty`, `Config.presence_penalty`**
+are canonical (promoted from extensions): openai_chat and every
+OpenAI-compatible preset verbatim, Gemini `generationConfig.seed /
+frequencyPenalty / presencePenalty` (as extensions they reached Gemini at
+the wrong path), OpenAI Responses and Anthropic drop with a record.
+`Config.temperature` is now `[0, 2]` (was `>= 0`). The OpenAI-chat ingest
+reads them, reads `top_k` into `Config.top_k`, translates the deprecated
+`functions` / `function_call` shape to `tools` / `tool_choice`, and
+passes `prediction` through as an extension.
+
+**Anthropic `max_tokens` when unset** is the class ceiling (16384 for
+the 4.x class and unknown names; 8192 for claude-3-5; 4096 for
+claude-3-*), recorded as `defaulted`. Until now a silent 1024 cut
+ordinary answers off with nothing said.
+
+**The `ollama` preset carries the reasoning dial** (`thinking_format=
+"reasoning_effort"`, with Ollama's own clamps declared): Ollama's
+OpenAI endpoint maps `reasoning_effort` to `think`
+(`openai/openai.go thinkFromReasoningEffort`). The 2026-09-11 refusal
+rested on a preset line written without a receipt and is reversed;
+`lmstudio` is now its own preset (unreceipted hypothesis: no dial →
+dropped with a record, never refused on it).
+
+**The connection budget is a first-class setting, and its defaults are
+the provider SDKs'.** `RouterConfig(timeouts=Timeouts(connect=, read=,
+write=, pool=), max_connections=)` shapes the one transport a router now
+builds and shares across every LM it constructs (before: one pool per
+provider, no way to reach its timeouts short of building the transport by
+hand). Defaults moved from 60 s read/write and 10 connections to 600 s
+read/write/pool and 100 connections — what OpenAI, Anthropic and litellm
+wait, because a model that thinks for minutes before its first byte is
+ordinary and a 60 s client limit reported it as a network failure (and,
+under a retry loop, restarted the generation each time). Every timeout is
+per operation (the next byte), not per request. The read-timeout message
+now says it is lm15's limit and names the knob. `LMRouter.close()` /
+`AsyncLMRouter.aclose()` (and `with`) release every connection; a
+transport that is simply dropped closes its idle sockets on collection
+(no `ResourceWarning` under `-W error`). `StdlibTransport(pool_timeout=)`
+replaces the fixed `5 × connect_timeout` slot wait. Found by the DSPy
+gauntlet (cmpnd-ai/breaka-your-lm, 2026-09-13).
+
+**Compressed replies are decoded.** A reply that arrives `Content-Encoding:
+gzip`/`x-gzip`/`deflate` (gateways and CDNs ignore lm15's `Accept-Encoding:
+identity`) is inflated incrementally through the stdlib `zlib`, so a
+compressed stream still streams; before, the compressed bytes reached the
+JSON parser and failed as a utf-8 decode error. `br` and `zstd` raise a
+`ProtocolError` naming the coding.
+
+**Two input/reply faults stop masquerading as network faults.** A 200 whose
+body is not JSON (a gateway's HTML error page, a truncated reply) raises
+`ProviderError` (code `provider`, the contract's "a reply that cannot become
+a Response without inventing one") carrying the status, content-type and
+the first bytes, instead of a bare `JSONDecodeError` that escaped every
+`except LM15Error`. Text containing a lone surrogate (not valid Unicode; no
+UTF-8 form exists) raises `ValueError` before the wire, naming the code
+point, instead of a `UnicodeEncodeError` deep in the transport.
+`HttpResponse` gained an optional `provider` field for that error's name.
+
 **Deprecated: `ProviderProfile` / `EndpointProfile`, `OpenAILM.from_profile`,
 `OpenAILM(profile=...)`, and the compat guessed from `base_url`** — removed in
 1.0.0. Say it with `compat=` (a preset name supplies its address), `base_url=`,

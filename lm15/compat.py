@@ -566,8 +566,31 @@ OPENAI_CHAT_PRESETS: dict[str, OpenAIChatCompat] = {
         cache_control="openai",
         tool_result_media="reject",  # MAP-10: text-only tool row; gpt-5.4 received the USER image and not the tool image
     ),
-    # ollama: max_tokens, no reasoning dial on the wire.
+    # ollama: max_tokens; reasoning_effort (and `reasoning: {effort}`) on
+    # the wire, mapped to Ollama's `think` by openai/openai.go
+    # `thinkFromReasoningEffort` (lm15-contract/research/tool-result-content/
+    # sources/ollama.txt:536-560): none → think:false, minimal → low,
+    # low|medium|high|max verbatim, xhigh → max; an unknown word is a 400.
+    # Until 2026-09-14 this said thinking_format="none" with "no receipt";
+    # THEORY.md §3.17.  Source receipt; live receipt still owed.
     "ollama": OpenAIChatCompat(
+        instruction_role="system",
+        max_tokens_field="max_tokens",
+        stream_usage="include",
+        thinking_format="reasoning_effort",
+        reasoning_efforts=("minimal", "low", "medium", "high", "xhigh", "max"),
+        tool_result_name="omit",
+        strict_tools="omit",
+        cache_control="none",
+        tool_result_media="reject",  # MAP-10: openai.go builds image rows without ToolCallID; no receipt — reject until one exists
+    ),
+    # LM Studio: its own policy at http://localhost:1234/v1
+    # (OPENAI_CHAT_PRESET_BASE_URLS).  HYPOTHESIS, no receipt (THEORY.md
+    # §3.17): lmstudio.ai lists max_tokens and no reasoning dial, so
+    # thinking_format="none" — under MAP-13 a set dial is dropped and
+    # recorded, never refused on this unverified line.  Until 2026-09-11
+    # the name was an alias of "ollama".
+    "lmstudio": OpenAIChatCompat(
         instruction_role="system",
         max_tokens_field="max_tokens",
         stream_usage="include",
@@ -575,15 +598,8 @@ OPENAI_CHAT_PRESETS: dict[str, OpenAIChatCompat] = {
         tool_result_name="omit",
         strict_tools="omit",
         cache_control="none",
-        tool_result_media="reject",  # MAP-10: openai.go builds image rows without ToolCallID; no receipt — reject until one exists
+        tool_result_media="reject",
     ),
-    # LM Studio: ollama's wire policy (lmstudio.ai docs list the same
-    # Chat Completions fields: max_tokens, no reasoning dial) at its own
-    # documented address, http://localhost:1234/v1 (OPENAI_CHAT_PRESET_BASE_URLS).
-    # Until 2026-09-11 the name was an alias of "ollama" and so took
-    # ollama's port in Rust/TS and, in Python, missed the URL table and
-    # fell through to the OpenAI cloud. No live receipt for the policy yet.
-    "lmstudio": None,  # type: ignore[dict-item]  # filled below: ollama's policy object
     # Groq: server-executed builtin tools (browser_search / code_interpreter,
     # live 2026-09-01); reasoning_effort dial; no cache_control field.
     "groq": OpenAIChatCompat(
@@ -801,7 +817,6 @@ OPENAI_CHAT_PRESETS: dict[str, OpenAIChatCompat] = {
 # Used by OpenAIChatLM when a compat preset is given by name and no
 # explicit base_url overrides it; the provider registry's access policies
 # point here so there is one copy of each URL.
-OPENAI_CHAT_PRESETS["lmstudio"] = OPENAI_CHAT_PRESETS["ollama"]
 
 OPENAI_CHAT_PRESET_BASE_URLS: dict[str, str] = {
     "openai": "https://api.openai.com/v1",

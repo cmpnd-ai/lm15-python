@@ -174,9 +174,20 @@ class ConfigurationError(LM15Error):
 
 
 class CapabilityError(LM15Error):
-    """Requested capability is not supported by this provider adapter."""
+    """Requested capability is not supported by this provider adapter.
+
+    ``feature`` (MAP-13, 2026-09-14) is the config path of what was
+    refused — ``config.top_k``, ``config.reasoning.thinking_budget``,
+    ``messages[0].parts[1]``, ``tools[2]`` — so the caller's own policy
+    layer can drop it and retry without parsing the message.  Absent
+    when the refusal is not about one addressable field.
+    """
 
     default_code = "unsupported_feature"
+
+    def __init__(self, message: str = "", *, feature: str | None = None, **kwargs) -> None:
+        self.feature = feature
+        super().__init__(message, **kwargs)
 
 
 class ProviderError(LM15Error):

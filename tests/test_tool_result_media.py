@@ -97,11 +97,20 @@ def test_responses_policy_matrix(policy, part, ok):
             lm.build_request(request(tool_result("call_1", part)), stream=False)
 
 
-def test_responses_stop_and_top_k_raise_instead_of_vanishing():
+def test_responses_stop_is_client_side_and_top_k_is_dropped_never_vanishing():
+    # MAP-13: the Responses wire has no stop or top_k field.  stop is
+    # applied client-side (the text is cut after the wire), top_k is
+    # dropped; both are recorded, neither vanishes silently.
     from lm15 import Config
-    for cfg in (Config(stop=("END",)), Config(top_k=5)):
-        with pytest.raises(UnsupportedFeatureError, match="no field on the Responses wire"):
-            OpenAILM(api_key="k").build_request(Request(model="m", messages=(Message.user("x"),), config=cfg), stream=False)
+    from tests._adapt import adapted, refuses
+
+    lm = OpenAILM(api_key="k")
+    out = adapted(lm, Request(model="m", messages=(Message.user("x"),), config=Config(stop=("END",))))
+    assert out["config.stop"].action == "client_side" and out["config.stop"].asked == ["END"]
+    assert "stop" not in out["__body__"]
+    out = adapted(lm, Request(model="m", messages=(Message.user("x"),), config=Config(top_k=5)))
+    assert out["config.top_k"].action == "dropped" and "top_k" not in out["__body__"]
+    refuses(lm, Request(model="m", messages=(Message.user("x"),), config=Config(top_k=5)), "config.top_k")
 
 
 # ─── OpenAI Chat Completions ────────────────────────────────────────
@@ -134,13 +143,15 @@ def test_chat_is_error_prefix():
     assert body(lm, request(tool_result("call_1", "boom", is_error=True)))["messages"][-1]["content"] == "[error] boom"
 
 
-def test_chat_user_media_without_a_slot_raises_and_top_k_raises():
+def test_chat_user_media_without_a_slot_raises_and_top_k_is_dropped():
     from lm15 import AudioPart, Config
+    from tests._adapt import adapted
     req = Request(model="m", messages=(Message.user((AudioPart(media_type="audio/wav", data=PNG),)),))
-    with pytest.raises(UnsupportedFeatureError, match="audio part in a user message has no slot"):
+    with pytest.raises(UnsupportedFeatureError, match="audio part in a user message has no slot") as err:
         OpenAIChatLM(api_key="k").build_request(req, stream=False)
-    with pytest.raises(UnsupportedFeatureError, match="top_k has no field"):
-        OpenAIChatLM(api_key="k").build_request(Request(model="m", messages=(Message.user("x"),), config=Config(top_k=3)), stream=False)
+    assert err.value.feature == "messages[*].parts[audio]"  # MAP-13: a refusal names its field
+    out = adapted(OpenAIChatLM(api_key="k"), Request(model="m", messages=(Message.user("x"),), config=Config(top_k=3)))
+    assert out["config.top_k"].action == "dropped" and "top_k" not in out["__body__"]
 
 
 @pytest.mark.parametrize("provider,expected", [
