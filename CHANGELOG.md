@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## 1.0.0rc2 — 2026-09-15
+
+Second release candidate. Install explicitly with `pip install lm15==1.0.0rc2`;
+a prerelease, not the stable 1.0. Two things changed what lm15 *is* since rc1
+and are stated first: MAP-13 (a setting a wire cannot take as asked is adapted
+and recorded, refused only when a guess could hurt — contract pin d1293f7,
+ratified 2026-09-14) and the connection budget (provider-SDK timeouts, a
+shared pool per router). Both came out of the DSPy gauntlet
+(cmpnd-ai/breaka-your-lm, 2026-09-13). The rest are the rc1-era entries that
+had not been released.
 
 **MAP-13: adapt freely, never invisibly; refuse only when a guess could
 hurt** (`lm15-contract/docs/mapping-rules.md` MAP-13, ratified
@@ -97,8 +106,6 @@ lm15-ts uses for the same case) with the way out named; reading still works.
 The credential-path constants keep their `~/...` form unexpanded instead of
 failing the import. Contributed by Adriaan Moors (#8).
 
-## Unreleased
-
 **Deprecated: `ProviderProfile` / `EndpointProfile`, `OpenAILM.from_profile`,
 `OpenAILM(profile=...)`, and the compat guessed from `base_url`** — removed in
 1.0.0. Say it with `compat=` (a preset name supplies its address), `base_url=`,
@@ -111,9 +118,11 @@ Python already has them — and states the wait-deadline rule: `wait(timeout=)`
 elapsing raises the builtin `TimeoutError`, the caller's own deadline, not an
 lm15 error).
 
-## Unreleased
-
-**A reasoning dial on a wire with no reasoning field is a refusal.**
+**A reasoning dial on a wire with no reasoning field is a refusal** — *reversed
+in this same release by MAP-13, above: Ollama has the dial (`reasoning_effort`
+→ `think`, from its source), the preset line it rested on had no receipt, and
+the `lmstudio` preset now drops a set dial with a record rather than refusing
+(THEORY.md §3.17). Kept here as the history of how the rule was found wanting.*
 `OpenAIChatLM` raises `UnsupportedFeatureError` before the wire when
 `config.reasoning` is set and the bound compat's `thinking_format` is
 `none` (the `ollama` and `lmstudio` presets). Until now the request went
