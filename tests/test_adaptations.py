@@ -72,7 +72,7 @@ def test_switch_note_silent_refuse() -> None:
     assert [(a.field, a.action) for a in scope.records] == [("config.a", "dropped"), ("config.b", "defaulted")]
     with collecting("silent") as scope:
         adapt("config.a", "dropped", "gone")
-    assert scope.records == []
+    assert [a.field for a in scope.records] == ["config.a"]  # kept: behaviour reads it; hidden on the response
     with collecting("refuse", provider="p") as scope:
         # A required field the caller left open is filled, not refused.
         adapt("config.max_tokens", "defaulted", "the wire requires it", applied=10)
@@ -91,7 +91,7 @@ def test_switch_note_silent_refuse() -> None:
 def test_policy_reaches_every_constructor_and_the_router() -> None:
     req = Request(model="claude-sonnet-4-5", messages=(Message.user("hi"),), config=Config(max_tokens=10, seed=7))
     assert [a.action for a in AnthropicLM(api_key="k").plan(req)] == ["dropped"]
-    assert AnthropicLM(api_key="k", adaptations="silent").plan(req) == ()
+    assert [a.action for a in AnthropicLM(api_key="k", adaptations="silent").plan(req)] == ["dropped"]  # a preview never hides
     with pytest.raises(UnsupportedFeatureError) as err:
         AnthropicLM(api_key="k", adaptations="refuse").plan(req)
     assert err.value.feature == "config.seed"
@@ -270,3 +270,96 @@ def test_plan_invokes_no_credential_and_needs_no_key() -> None:
     with pytest.raises(lm15.MissingCredentialError):
         router.lm("anthropic:claude-sonnet-4-5")
     assert "anthropic" not in router._lms  # the planning LM is not cached
+
+
+# ─── review of dspy#10409: the five gaps, each pinned ────────────────
+
+def test_stop_cutter_catches_a_sequence_split_into_pieces_shorter_than_itself() -> None:
+    from lm15.result import _StopCutter
+
+    # "ST" + "OP": the first chunk is shorter than the withheld tail; the
+    # cutter once released "S" and missed the word.
+    c = _StopCutter(("STOP",))
+    assert c.feed(0, "ST") == "" and c.feed(0, "OP") == "" and c.cut
+    c = _StopCutter(("STOP",))
+    assert [c.feed(0, piece) for piece in ("S", "T", "O", "P")] == ["", "", "", ""] and c.cut
+    c = _StopCutter(("STOP",))
+    assert [c.feed(0, piece) for piece in ("a", "b", "c", "d")] == ["", "", "", "a"] and not c.cut
+    assert c.flush() == [(0, "bcd")]
+
+
+def test_stream_cuts_when_the_stop_word_arrives_letter_by_letter() -> None:
+    req = Request(model="gpt-5", messages=(Message.user("hi"),), config=Config(stop=("STOP",)))
+    body = _responses_sse("alpha ", "S", "T", "O", "P", " beta")
+    lm = OpenAILM(api_key="k", transport=FakeTransport([FakeResponse(status=200, body=body)]))
+    events = list(lm.stream(req))
+    text = "".join(e.delta.text for e in events if e.type == "delta" and isinstance(e.delta, TextDelta))
+    assert text == "alpha " and events[-1].finish_reason == "stop"
+
+
+def test_silent_hides_the_record_and_changes_nothing_else() -> None:
+    req = Request(model="gpt-5", messages=(Message.user("hi"),), config=Config(stop=("END",)))
+    body = _responses_sse("alpha ", "END beta")
+    noted = OpenAILM(api_key="k", transport=FakeTransport([FakeResponse(status=200, body=body)]))
+    silent = OpenAILM(api_key="k", transport=FakeTransport([FakeResponse(status=200, body=body)]), adaptations="silent")
+    a, b = noted.complete(req), silent.complete(req)
+    assert a.text == b.text == "alpha "           # the cut happens under both
+    assert a.adaptations and b.adaptations == ()  # only the record differs
+    assert silent.plan(req)[0].action == "client_side"  # a preview never hides
+    events = list(OpenAILM(api_key="k", transport=FakeTransport([FakeResponse(status=200, body=body)]), adaptations="silent").stream(req))
+    assert events[0].adaptations == () and events[-1].finish_reason == "stop"
+    # A narrowed tool list is narrowed under "silent" too.
+    from lm15 import FunctionTool, ToolChoice
+    tooled = Request(model="claude-sonnet-4-5", messages=(Message.user("hi"),), tools=(FunctionTool(name="a"), FunctionTool(name="b")),
+                     config=Config(max_tokens=10, tool_choice=ToolChoice(mode="auto", allowed=("a",))))
+    wire, _ = AnthropicLM(api_key="k", adaptations="silent")._build(tooled, stream=False)
+    assert [t["name"] for t in json.loads(wire.body)["tools"]] == ["a"]
+
+
+def test_plan_reads_no_stored_login_and_walks_no_chain(monkeypatch) -> None:
+    import lm15.access as access
+    from lm15.registry import PROVIDERS
+
+    class Forbidden(dict):
+        def get(self, key, default=None):
+            raise AssertionError(f"plan() must not read a stored login ({key})")
+
+        def __getitem__(self, key):
+            raise AssertionError(f"plan() must not read a stored login ({key})")
+
+    monkeypatch.setattr(access, "_CREDENTIAL_LOADERS", Forbidden())
+    router = LMRouter(RouterConfig(env={}))
+    for pid in PROVIDERS:
+        model = {"deepseek-anthropic": "deepseek-v4-flash", "moonshotai-anthropic": "kimi-k3"}.get(pid, "m")
+        router.plan(Request(model=f"{pid}:{model}", messages=(Message.user("hi"),)))
+    assert router._lms == {}  # planning LMs are never cached
+
+
+def test_router_is_thread_safe_on_first_calls() -> None:
+    import threading
+
+    router = LMRouter(RouterConfig(env={}, api_keys={"anthropic": "k", "openai": "k"}))
+    transports: set[int] = set()
+    lms: dict[str, set[int]] = {"anthropic": set(), "openai": set()}
+    barrier = threading.Barrier(16)
+
+    def go(model: str) -> None:
+        barrier.wait()
+        lm = router.lm(model)
+        transports.add(id(lm.transport))
+        lms[model.split(":")[0]].add(id(lm))
+
+    threads = [threading.Thread(target=go, args=(m,)) for m in ["anthropic:x", "openai:y"] * 8]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(transports) == 1 and all(len(ids) == 1 for ids in lms.values())
+    router.close()
+    assert router._transport is None and router._lms == {}
+
+
+def test_client_side_stop_reason_makes_no_billing_promise() -> None:
+    lm = OpenAILM(api_key="k")
+    (a,) = lm.plan(Request(model="gpt-5", messages=(Message.user("hi"),), config=Config(stop=("END",))))
+    assert "not reported" in a.reason and "billed" not in a.reason.replace("and billing, is its own behaviour", "")

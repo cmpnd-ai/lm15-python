@@ -100,11 +100,17 @@ alike.
 
 A client-side `stop` is honoured by **streaming and closing the
 connection at the cut** — on a plain `complete()` call too, under the
-hood. Generation stops there, so nothing past the sequence is billed.
-The price: the usage report only rides the provider's final frame, which
+hood. Whether the provider stops generating (and billing) when the
+connection closes is the provider's behaviour, not something lm15 can
+promise; OpenAI does for an ordinary foreground stream. What lm15 does
+promise: the usage report only rides the provider's final frame, which
 is never read when the cut happens, so `usage` is "not reported" on
 those calls — never estimated. A call whose text never reaches the
 sequence completes normally, usage included.
+
+The `"silent"` policy hides the record on the response and changes
+nothing else: the cut still happens, a narrowed tool list is still
+narrowed. `plan()` returns the full record under every policy.
 
 ## Where the rule lives
 

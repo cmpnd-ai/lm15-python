@@ -25,8 +25,9 @@ on every LM constructor and on `RouterConfig`; `"refuse"` is the
 pre-change strictness. Roughly twenty refusals became adaptations:
 `top_k` on the OpenAI wires, `seed`/penalties on Anthropic, `temperature
 > 1` on Anthropic (clamped to 1.0), `stop` on the Responses wire
-(honoured by streaming and closing at the cut, on `complete()` too —
-nothing past the sequence is billed; usage is then not reported), thinking-summary levels, an effort word with no
+(honoured by streaming and closing at the cut, on `complete()` too;
+usage is then not reported — whether the provider stops generating on a
+closed connection is its own behaviour), thinking-summary levels, an effort word with no
 level (nearest), a budget beside an effort, `reasoning=off` on Gemini 3
 and Grok (the lowest level), tool allowlists on Anthropic/xAI/Z.AI (only
 those tools are sent), `parallel=False` on Gemini, `cache.key` /
