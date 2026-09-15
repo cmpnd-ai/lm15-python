@@ -150,8 +150,8 @@ class AsyncBaseProviderLM:
     adaptations: AdaptationPolicy = "note"
 
     def plan(self, request: Request):
-        """What a call WOULD adapt (MAP-13), no network; pure, so sync."""
-        return self._inner._build(request, stream=False, policy=self.adaptations)[1]
+        """What a call WOULD adapt (MAP-13), no network, no credential; pure, so sync."""
+        return self._inner.plan(request, policy=self.adaptations)
 
     async def complete(self, request: Request) -> Response:
         req, adaptations = await self._build(self._inner._build, request, stream=False, policy=self.adaptations)

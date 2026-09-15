@@ -102,15 +102,18 @@ class AdaptationScope:
     policy: AdaptationPolicy
     provider: str | None
     records: list[Adaptation] = field(default_factory=list)
+    # plan(): the wire request is built and discarded, so no credential is
+    # invoked and none is needed — like resolve(), plan() is offline.
+    planning: bool = False
 
 
 _scope: ContextVar[AdaptationScope | None] = ContextVar("lm15_adaptation_scope", default=None)
 
 
 @contextmanager
-def collecting(policy: AdaptationPolicy, *, provider: str | None = None) -> Iterator[AdaptationScope]:
+def collecting(policy: AdaptationPolicy, *, provider: str | None = None, planning: bool = False) -> Iterator[AdaptationScope]:
     """Open a scope for one request build.  Nested scopes are independent."""
-    scope = AdaptationScope(policy=check_policy(policy), provider=provider)
+    scope = AdaptationScope(policy=check_policy(policy), provider=provider, planning=planning)
     token = _scope.set(scope)
     try:
         yield scope
@@ -162,6 +165,13 @@ _ACTION_VERB = {
 def current_policy() -> AdaptationPolicy:
     scope = _scope.get()
     return scope.policy if scope is not None else "note"
+
+
+def is_planning() -> bool:
+    """True inside ``plan()``: the build's bytes are discarded, so signing
+    and credential providers are skipped."""
+    scope = _scope.get()
+    return scope is not None and scope.planning
 
 
 def adaptation_to_dict(a: Adaptation) -> dict[str, Any]:

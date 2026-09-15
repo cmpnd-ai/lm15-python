@@ -20,7 +20,7 @@ from ..errors import (
     map_http_error,
     with_credential_hint,
 )
-from ..adaptation import Adaptation, AdaptationPolicy, check_policy, collecting
+from ..adaptation import Adaptation, AdaptationPolicy, check_policy, collecting, is_planning
 from ..credentials import AwsCredentials, CredentialLike, CredentialValue, coerce_credential
 from ..features import EndpointSupport, ProviderManifest
 from ..models import ModelInfo
@@ -371,7 +371,10 @@ class BaseProviderLM:
 
         from ..access import auth_header
 
-        credential = resolve_credential_value(self.api_key) if self.api_key is not None else None
+        # plan() builds and discards: no credential provider is invoked, no
+        # header is signed — the record of adaptations does not depend on it.
+        planning = is_planning()
+        credential = resolve_credential_value(self.api_key) if self.api_key is not None and not planning else None
         hdrs = dict(headers.items()) if isinstance(headers, dict) else dict(headers or [])
         if credential is not None and not isinstance(credential, AwsCredentials):
             pair = auth_header(self.access, credential, api_key_header=self._api_key_header)
@@ -429,20 +432,22 @@ class BaseProviderLM:
 
     # ─── MAP-13: build with adaptations, plan, client-side steps ───
 
-    def _build(self, request: Request, stream: bool, *, policy: "AdaptationPolicy | None" = None) -> "tuple[TransportRequest, tuple[Adaptation, ...]]":
+    def _build(self, request: Request, stream: bool, *, policy: "AdaptationPolicy | None" = None, planning: bool = False) -> "tuple[TransportRequest, tuple[Adaptation, ...]]":
         """``build_request`` inside an adaptation scope: the wire request and
         the record of what differs from what was asked.  The one place a
         scope is opened; builders record through ``lm15.adaptation.adapt``.
-        ``policy`` overrides the adapter's own (the async mirror passes its)."""
-        with collecting(check_policy(policy if policy is not None else self.adaptations), provider=self.provider) as scope:
+        ``policy`` overrides the adapter's own (the async mirror passes its);
+        ``planning`` skips credentials and signing (the bytes are discarded)."""
+        with collecting(check_policy(policy if policy is not None else self.adaptations), provider=self.provider, planning=planning) as scope:
             req = self.build_request(request, stream=stream)
         return req, tuple(scope.records)
 
-    def plan(self, request: Request) -> "tuple[Adaptation, ...]":
-        """What a call with this request WOULD adapt, with no network.
-        Raises what the call would raise (a refusal under any policy, or
-        every adaptation under ``adaptations="refuse"``)."""
-        return self._build(request, stream=False)[1]
+    def plan(self, request: Request, *, policy: "AdaptationPolicy | None" = None) -> "tuple[Adaptation, ...]":
+        """What a call with this request WOULD adapt, with no network and no
+        credential invoked (like ``resolve()``, offline).  Raises what the
+        call would raise (a refusal under any policy, or every deviation
+        under ``adaptations="refuse"``)."""
+        return self._build(request, stream=False, policy=policy, planning=True)[1]
 
     def _finish_response(self, request: Request, response: Response, adaptations: "tuple[Adaptation, ...]") -> Response:
         """Stamp the record on the response and apply client-side steps."""

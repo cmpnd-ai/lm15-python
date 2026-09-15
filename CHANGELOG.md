@@ -19,7 +19,8 @@ adapted — dropped, clamped, substituted, applied client-side, noted as
 already satisfied, or defaulted — and RECORDED on `Response.adaptations`
 and `StreamStartEvent.adaptations` (`Adaptation(field, action, reason,
 asked, applied)`); `lm.plan(request)` / `router.plan(request)` preview
-the record with no network. `adaptations="note" | "silent" | "refuse"`
+the record with no network and no credential invoked (a route with no
+key still plans). `adaptations="note" | "silent" | "refuse"`
 on every LM constructor and on `RouterConfig`; `"refuse"` is the
 pre-change strictness. Roughly twenty refusals became adaptations:
 `top_k` on the OpenAI wires, `seed`/penalties on Anthropic, `temperature

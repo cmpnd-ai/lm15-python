@@ -249,3 +249,24 @@ def test_nearest_effort_ties_go_lower() -> None:
     assert nearest_effort("high", ("low", "high", "max")) == "high"
     with pytest.raises(ValueError):
         nearest_effort("low", ())
+
+
+# ─── plan() is offline: no credential, no key required ───────────────
+
+def test_plan_invokes_no_credential_and_needs_no_key() -> None:
+    from lm15 import OpenAIChatLM
+
+    calls: list[int] = []
+    lm = OpenAIChatLM(api_key=lambda: calls.append(1) or "k")
+    req = Request(model="gpt-4.1", messages=(Message.user("hi"),), config=Config(top_k=2))
+    assert [a.action for a in lm.plan(req)] == ["dropped"]
+    assert calls == []  # the build's bytes are discarded; the provider is not asked
+    lm.build_request(req, stream=False)
+    assert calls == [1]
+    # A router with no key for the route still plans; lm() still refuses.
+    router = LMRouter(RouterConfig(env={}))
+    plan = router.plan(Request(model="anthropic:claude-sonnet-4-5", messages=(Message.user("hi"),), config=Config(seed=1)))
+    assert [a.field for a in plan] == ["config.max_tokens", "config.seed"]
+    with pytest.raises(lm15.MissingCredentialError):
+        router.lm("anthropic:claude-sonnet-4-5")
+    assert "anthropic" not in router._lms  # the planning LM is not cached

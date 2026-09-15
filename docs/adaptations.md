@@ -70,8 +70,10 @@ can drop that one thing and retry without parsing the message.
 plan = router.plan(request)      # tuple[Adaptation, ...]; no network
 ```
 
-`plan()` raises exactly what the call would raise. Use it to decide
-between routes before spending a request.
+`plan()` raises exactly what the call would raise. It is offline like
+`resolve()`: no network, and no credential is read or invoked — a route
+with no key still plans. Use it to decide between routes before spending
+a request.
 
 ## The switch
 

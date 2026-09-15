@@ -952,9 +952,16 @@ class LMRouter:
 
     def plan(self, request: Request):
         """MAP-13 pre-flight: what this request WOULD adapt on its route, no
-        network; raises what the call would raise."""
+        network and no credential (like ``resolve()``); raises what the call
+        would raise.  A route with no key gets a throwaway planning LM (not
+        cached): the build's bytes are discarded, so no key is needed."""
         resolution = self.resolve(request.model)
-        return self.lm(request.model).plan(_routed_request(request, resolution))
+        try:
+            lm = self.lm(request.model)
+        except MissingCredentialError:
+            planning = replace(self.config, env={}, api_keys={**dict(self.config.api_keys or {}), resolution.provider: "planning"})
+            lm = _build_lm(resolution, planning, self._adapters, self._shared_transport())
+        return lm.plan(_routed_request(request, resolution))
 
     def complete(self, request: Request) -> Response:
         resolution = self.resolve(request.model)
