@@ -84,6 +84,87 @@ class TestRouterConfig:
         assert "Timeouts(read=" in _CLIENT_KEYWORDS["timeout"]
 
 
+# Exercise provider-built requests, not only the transport's stored defaults:
+# fixed 60/120-second values here used to override the caller's read timeout.
+_INFERENCE_PROVIDERS = ("openai", "openai-chat", "anthropic", "gemini")
+
+
+@pytest.mark.parametrize("provider", _INFERENCE_PROVIDERS)
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("read_seconds", [None, 0.2, 1800.0])
+def test_inference_request_inherits_transport_timeout(provider, streaming, read_seconds):
+    timeouts = None if read_seconds is None else Timeouts(read=read_seconds)
+    with LMRouter(RouterConfig(env={}, api_keys={provider: "fake"}, timeouts=timeouts)) as router:
+        lm = router.lm(f"{provider}:m")
+        request = Request(model="m", messages=(Message.user("hi"),))
+        wire = lm.build_request(request, stream=streaming)
+        assert wire.read_timeout is None
+        assert lm.transport._read_timeout == (600.0 if read_seconds is None else read_seconds)
+
+
+@pytest.fixture
+def stalled_reply(transport_server):
+    import threading
+
+    release = threading.Event()
+    finished = threading.Event()
+
+    def handler(req, client):
+        try:
+            release.wait(1.0)
+            # Bound the regression test even if the old 60/120-second override
+            # returns: a non-timeout error must fail, not satisfy the assertion.
+            client.sendall(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+        finally:
+            finished.set()
+
+    transport_server.ctx.handler = handler
+    try:
+        yield transport_server.base_url()
+    finally:
+        release.set()
+        if transport_server.ctx.requests:
+            finished.wait(2.0)
+
+
+@pytest.mark.parametrize("provider", _INFERENCE_PROVIDERS)
+@pytest.mark.parametrize("streaming", [False, True])
+def test_provider_call_obeys_read_timeout(provider, streaming, stalled_reply, monkeypatch):
+    from lm15.errors import TransportError
+
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
+    monkeypatch.setenv("no_proxy", "127.0.0.1")
+    config = RouterConfig(env={}, api_keys={provider: "fake"},
+                          base_urls={provider: stalled_reply}, timeouts=Timeouts(read=0.2))
+    with LMRouter(config) as router:
+        request = Request(model=f"{provider}:m", messages=(Message.user("hi"),))
+        with pytest.raises(TransportError, match="read timed out"):
+            if streaming:
+                list(router.stream(request))
+            else:
+                router.complete(request)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", _INFERENCE_PROVIDERS)
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_async_provider_call_obeys_read_timeout(provider, streaming, stalled_reply, monkeypatch):
+    from lm15.errors import TransportError
+
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
+    monkeypatch.setenv("no_proxy", "127.0.0.1")
+    config = RouterConfig(env={}, api_keys={provider: "fake"},
+                          base_urls={provider: stalled_reply}, timeouts=Timeouts(read=0.2))
+    async with AsyncLMRouter(config) as router:
+        request = Request(model=f"{provider}:m", messages=(Message.user("hi"),))
+        with pytest.raises(TransportError, match="read timed out"):
+            if streaming:
+                async for _ in router.stream(request):
+                    pass
+            else:
+                await router.complete(request)
+
+
 class TestSharedTransport:
     def test_every_lm_of_a_router_shares_one_transport(self) -> None:
         router = LMRouter(RouterConfig(env={}, api_keys={"anthropic": "k", "openai": "k", "openai-chat": "k"}))

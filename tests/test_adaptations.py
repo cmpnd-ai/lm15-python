@@ -159,9 +159,9 @@ _RESPONSES_BODY = json.dumps({
 
 def test_complete_with_a_stop_streams_under_the_hood_and_cuts() -> None:
     # Decision 2026-09-14: a client-side stop on a non-streaming call is
-    # honoured by streaming and closing at the cut — nothing past the
-    # sequence is generated or billed; usage is not reported (never
-    # estimated).  The fake serves the streamed body the wire would send.
+    # honoured by streaming and closing at the cut. The provider controls
+    # subsequent generation/billing; usage is not reported (never
+    # estimated). The fake serves the streamed body the wire would send.
     req = Request(model="gpt-5", messages=(Message.user("hi"),), config=Config(stop=("END",)))
     body = _responses_sse("alpha ", "END beta")
     lm = OpenAILM(api_key="k", transport=FakeTransport([FakeResponse(status=200, body=body)]))
@@ -274,18 +274,22 @@ def test_plan_invokes_no_credential_and_needs_no_key() -> None:
 
 # ─── review of dspy#10409: the five gaps, each pinned ────────────────
 
+def _text_event(text: str, index: int = 0) -> StreamDeltaEvent:
+    return StreamDeltaEvent(TextDelta(text=text, part_index=index))
+
+
 def test_stop_cutter_catches_a_sequence_split_into_pieces_shorter_than_itself() -> None:
     from lm15.result import _StopCutter
 
     # "ST" + "OP": the first chunk is shorter than the withheld tail; the
     # cutter once released "S" and missed the word.
     c = _StopCutter(("STOP",))
-    assert c.feed(0, "ST") == [] and c.feed(0, "OP") == [] and c.cut
+    assert c.feed(_text_event("ST")) == [] and c.feed(_text_event("OP")) == [] and c.cut
     c = _StopCutter(("STOP",))
-    assert [c.feed(0, piece) for piece in ("S", "T", "O", "P")] == [[], [], [], []] and c.cut
+    assert [c.feed(_text_event(piece)) for piece in ("S", "T", "O", "P")] == [[], [], [], []] and c.cut
     c = _StopCutter(("STOP",))
-    assert [c.feed(0, piece) for piece in ("a", "b", "c", "d")] == [[], [], [], [(0, "a")]] and not c.cut
-    assert c.flush() == [(0, "b"), (0, "c"), (0, "d")]
+    assert [c.feed(_text_event(piece)) for piece in ("a", "b", "c", "d")] == [[], [], [], [_text_event("a")]] and not c.cut
+    assert c.flush() == [_text_event("b"), _text_event("c"), _text_event("d")]
 
 
 def test_stream_cuts_when_the_stop_word_arrives_letter_by_letter() -> None:
@@ -380,12 +384,15 @@ def test_stop_sequence_spanning_two_text_parts_is_cut_on_stream() -> None:
     from lm15.result import _StopCutter
 
     c = _StopCutter(("STOP",))
-    out = c.feed(0, "alpha S") + c.feed(1, "TOP beta")
-    assert out == [(0, "alph"), (0, "a ")] and c.cut
-    # No hit: every piece is released under the part it came from.
+    out = c.feed(_text_event("alpha S")) + c.feed(_text_event("TOP beta", 1))
+    # Hold the original event until it is safe, rather than splitting it
+    # just for early delivery and losing its attached fields.
+    assert out == [_text_event("alpha ")] and c.cut
+    # No hit: every original event is released under its own part index.
     c = _StopCutter(("STOP",))
-    out = c.feed(0, "a") + c.feed(1, "b") + c.feed(2, "c") + c.feed(3, "d") + c.flush()
-    assert out == [(0, "a"), (1, "b"), (2, "c"), (3, "d")] and not c.cut
+    original = [_text_event(text, index) for index, text in enumerate("abcd")]
+    out = [event for source in original for event in c.feed(source)] + c.flush()
+    assert out == original and all(a is b for a, b in zip(out, original)) and not c.cut
 
 
 def test_dropped_schema_is_not_sent_on_a_server_that_ignores_it() -> None:

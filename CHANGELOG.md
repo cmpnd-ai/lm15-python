@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.0.0rc3 — Unreleased
+
+Source version for the fixes below; updating the source does not publish a PyPI release.
+
+- Ordinary and streamed inference requests inherit the configured transport
+  read timeout instead of overriding it with 60/120 seconds. With no caller
+  setting, the existing 600-second default now applies to these requests.
+- Client-side stop filtering preserves original events, their order and token
+  scores. A cut inside a token omits that token's score and marks
+  `TextDelta.logprobs_complete` / `Response.logprobs_complete` false; the flag
+  survives canonical JSON. No probability is invented for shortened text.
+  Keeping whole events may delay delivery until an event boundary is safe.
+- Live turn collection defaults to 16 MiB of compact ASCII JSON event data
+  or 10,000 events. `session.turn(max_bytes=..., max_events=...)` configures
+  either budget. `CollectionLimitError` (`collection_limit`, non-retryable)
+  preserves `partial_events` and any `rejected_event`, without closing the
+  session or pretending the turn completed. `error.partial` assembles the
+  incomplete turn on demand. These are data budgets, not exact process-memory
+  limits; long turns can use larger budgets or raw session iteration.
+- Compressed replies handle deflate headers split across reads and every gzip
+  member, including split subsequent headers, empty members and zero padding.
+  Corrupt/truncated later members and trailing nonmember data raise
+  `ProtocolError` instead of losing response bytes. Standard zlib headers win
+  over legacy raw-deflate interpretation; corruption is not retried as a
+  different format after output. No new runtime dependency.
+
+Shared score, timeout and live-collection rules were ratified on 2026-09-15.
+Other language implementations must adopt their new contract pin separately;
+this release does not claim they already implement the additions.
+
 ## 1.0.0rc2 — 2026-09-15
 
 Second release candidate. Install explicitly with `pip install lm15==1.0.0rc2`;

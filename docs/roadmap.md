@@ -7,8 +7,8 @@ same discipline as the code — see
 
 ## Where we are (September 2026)
 
-- **1.0.0rc2** is the current release candidate. Install it explicitly with
-  `pip install lm15==1.0.0rc2`; it is not the stable 1.0 release. The chat core
+- **1.0.0rc3** is the next release candidate in this checkout, not yet
+  published by this source update and not the stable 1.0 release. The chat core
   — canonical types, serde, errors, request building, response parsing,
   streaming — is checked against the pinned language-neutral contract.
   Publishing this candidate does not ratify draft contract changes.
