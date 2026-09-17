@@ -26,6 +26,21 @@ Source version for the fixes below; updating the source does not publish a PyPI 
   over legacy raw-deflate interpretation; corruption is not retried as a
   different format after output. No new runtime dependency.
 
+- `RouterConfig(providers=(ProviderDefinition.chat(access, compat=...), ...))`
+  declares a provider the registry does not list — a gateway, a service
+  lm15 has not receipted — as the same pure-data triple a registry entry
+  is. It routes by id and aliases (`id:model`, `id/model`, either
+  spelling), takes `api_keys`/`base_urls` entries, shares the router's
+  pool and timeouts, and plans without a key. `Resolution.declared` is
+  true and `describe()` says "no lm15 receipts": a declaration is the
+  caller's word, not a capture. A spelling a registry entry or litellm
+  prefix already uses is refused at config time. `ProviderDefinition`
+  gains `.chat()`, `.responses()`, `.anthropic()` constructors, a compat
+  *object* for declared entries, and `aliases`. Before this, an unlisted
+  server meant constructing the dialect LM directly and losing the router's
+  credential, address and connection rules (found by the DSPy Fireworks
+  custom engine, 2026-09-16).
+
 Shared score, timeout and live-collection rules were ratified on 2026-09-15.
 Other language implementations must adopt their new contract pin separately;
 this release does not claim they already implement the additions.

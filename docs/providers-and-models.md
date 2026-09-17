@@ -189,6 +189,13 @@ Omitting `compat` uses the default Chat Completions policy. An unknown
 `compat="server-name"` raises `ValueError`; pass an `OpenAIChatCompat`
 object if your server needs different settings.
 
+To route to that server by name — `myserver:model`, `myserver/model`,
+`RouterConfig(api_keys={"myserver": ...})`, a shared pool and timeouts —
+declare it to the router instead of constructing the LM yourself. A
+declared provider is the same pure-data triple a registry entry is: an
+access policy, a wire dialect and a compat policy. See
+[Declaring a provider the registry does not list](using-the-router.md#declaring-a-provider-the-registry-does-not-list).
+
 [Connect an unlisted OpenAI-compatible server](connecting-openai-compatible-servers.md)
 walks through a custom policy, LM Studio's preset and address, and checking
 requests without sending them. Compatibility depends on the server and

@@ -250,6 +250,64 @@ ordinary `OpenAILM`. Keep it, configure it, never call the router again.
 lm = LMRouter().lm("gpt-4.1-mini")   # plain OpenAILM
 ```
 
+## Declaring a provider the registry does not list
+
+A gateway, a hosting service lm15 has not receipted yet, a second
+OpenAI-compatible vendor: declare it, and the router treats it like any
+registry entry — by name, with the same credential, address and
+connection rules — in every router built with that config.
+
+```python
+from lm15 import LMRouter, RouterConfig
+from lm15.compat import OpenAIChatCompat
+from lm15.features import AccessPolicy, EndpointSupport
+from lm15.registry import ProviderDefinition
+
+FIREWORKS = ProviderDefinition.chat(
+    AccessPolicy(
+        provider="fireworks",
+        supports=EndpointSupport(complete=True, stream=True, models=True),
+        auth_modes=("bearer",),
+        env_keys=("FIREWORKS_API_KEY",),
+        base_url="https://api.fireworks.ai/inference/v1",
+    ),
+    compat=OpenAIChatCompat(max_tokens_field="max_tokens", thinking_format="reasoning_effort"),
+    aliases=("fireworks-ai",),          # litellm spells it fireworks_ai/
+    note="Fireworks (Chat Completions dialect)",
+)
+
+router = LMRouter(config=RouterConfig(providers=(FIREWORKS,)))
+router.resolve("fireworks:accounts/fireworks/models/deepseek-v4p1-flash").provider   # "fireworks"
+router.resolve_openai_chat("fireworks_ai/accounts/fireworks/models/deepseek-v4p1-flash")  # same door
+```
+
+What a declaration is:
+
+- **`ProviderDefinition.chat(access, compat=...)`** for the Chat
+  Completions wire; `.responses(...)` and `.anthropic(...)` for the other
+  two dialects. The access policy names the provider, its key variable(s),
+  its address and what it serves; the compat object describes the server's
+  spellings (`OpenAIChatCompat` fields — the same knobs the built-in presets
+  use). You never name an adapter class.
+- **`aliases`** are extra input spellings, hyphenated: accepted as
+  `alias:model` and `alias/model` (and their underscore forms), never
+  emitted. `RouterConfig(api_keys=...)` and `base_urls` are keyed by the id.
+- **One string, one door.** An id or alias that a registry entry or a
+  litellm prefix already spells is refused when the config is built, so a
+  declaration can never shadow `groq` or `ollama_chat/`.
+
+What it is not: a receipt. lm15's registry entries are pinned from live
+captures in the contract; a declared provider is your word. The router says
+so — `Resolution.declared` is true and `describe()` ends with
+"declared by RouterConfig(providers=...) — no lm15 receipts" — and
+`lm15 doctor` and `vet` do not list it. When a declared provider earns its
+receipts it becomes a registry entry and the declaration is deleted.
+
+Everything else applies unchanged: `api_keys`/env-key lookup and
+`MissingCredentialError` naming the declared variable, `base_urls`
+overriding the address, the shared transport and `timeouts`, `plan()` with
+no key, `adaptations=`, and the async router building the async mirror.
+
 ## Customizing the rule table
 
 Rules are data, not callbacks:
