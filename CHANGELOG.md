@@ -36,7 +36,10 @@ Source version for the fixes below; updating the source does not publish a PyPI 
   caller's word, not a capture. A spelling a registry entry or litellm
   prefix already uses is refused at config time. `ProviderDefinition`
   gains `.chat()`, `.responses()`, `.anthropic()` constructors, a compat
-  *object* for declared entries, and `aliases`. Before this, an unlisted
+  *object* for declared entries, and `aliases`; a declared entry is
+  key-based (the OAuth policies need their own adapter class).
+  `Resolution` carries `credential_policy` and `placeholder_key`, so
+  `describe()` reads the resolution, not the module tables. Before this, an unlisted
   server meant constructing the dialect LM directly and losing the router's
   credential, address and connection rules (found by the DSPy Fireworks
   custom engine, 2026-09-16).

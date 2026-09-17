@@ -90,6 +90,12 @@ class TestDefinition:
         with pytest.raises(ValueError, match="base_url"):
             ProviderDefinition.chat(_access(base_url=None), compat=OpenAIChatCompat())
 
+    def test_declared_entry_is_key_based(self) -> None:
+        with pytest.raises(ValueError, match="key-based"):
+            ProviderDefinition.chat(_access(credential_policy="oauth", env_keys=()), compat=OpenAIChatCompat())
+        with pytest.raises(ValueError, match="key-based"):
+            ProviderDefinition.chat(_access(credential_policy="oauth-unless-explicit"), compat=OpenAIChatCompat())
+
     def test_aliases_are_canonical_unique_and_not_the_id(self) -> None:
         with pytest.raises(ValueError, match="hyphenated"):
             ProviderDefinition.chat(_access(), compat=OpenAIChatCompat(), aliases=("fireworks_ai",))
@@ -166,6 +172,22 @@ class TestResolve:
         text = res.describe()
         assert "declared by RouterConfig(providers=...)" in text and "no lm15 receipts" in text
         assert "compat OpenAIChatCompat object" in text
+
+    def test_describe_reads_the_declaration_not_the_registry(self) -> None:
+        # A declared keyless server: the resolution carries the placeholder
+        # and describe() says so (greptile on dspy#10440).
+        local = ProviderDefinition.chat(
+            _access("gpu-box", env_keys=(), base_url="http://gpu-box:8000/v1"),
+            compat=OpenAIChatCompat(), placeholder_key="EMPTY",
+        )
+        res = LMRouter(config=RouterConfig(providers=(local,), env={})).resolve("gpu-box:m")
+        assert res.placeholder_key == "EMPTY" and res.credential_policy == "key" and res.env_key is None
+        assert "local-server default" in res.describe()
+        # Registry entries carry the same facts.
+        ollama = _router().resolve("ollama:m")
+        assert ollama.placeholder_key == "ollama" and "local-server default" in ollama.describe()
+        xai = _router().resolve("xai:grok-4")
+        assert xai.credential_policy == "oauth-unless-explicit" and "stored subscription" in xai.describe()
 
     def test_registry_entries_are_not_declared(self) -> None:
         res = _router(env={"GROQ_API_KEY": "k"}).resolve("groq:llama")
