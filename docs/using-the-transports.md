@@ -280,9 +280,12 @@ whatever connection/upload work the browser performs before returning headers;
 it is not an implementation of the stdlib transport's separate socket budgets.
 
 The host automatically decodes compressed bodies. lm15 checks **visible**
-`Content-Encoding` against INV-053 (`identity`, `gzip`, `x-gzip`, `deflate` only),
-rejecting even host-supported `br`/`zstd`, but never inflates decoded bytes a
-second time. It attempts `Accept-Encoding: identity`; browsers can strip that
+`Content-Encoding`, accepting `identity`, `gzip`, `x-gzip`, `deflate`, `br`, and
+`zstd`, but never inflates decoded bytes a second time. The raw HTTP transports
+still reject `br`/`zstd`: unlike Fetch they would need Python decoders. Unknown
+visible codings remain errors. This Fetch-specific distinction needs to be
+reflected in INV-053 before this change is released.
+It attempts `Accept-Encoding: identity`; browsers can strip that
 forbidden header and negotiate compression themselves. On cross-origin replies
 `Content-Encoding` is not CORS-safelisted: servers must expose it with
 `Access-Control-Expose-Headers` for this policy check to work. Hidden headers

@@ -147,7 +147,8 @@ async def test_explicit_header_deadline_overrides_transport_default_even_zero(br
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("header", ["gzip", "x-gzip", "deflate", "gzip, deflate", "identity", None])
+@pytest.mark.parametrize("header", ["gzip", "x-gzip", "deflate", "gzip, deflate", "identity", None,
+                                  "br", "zstd", "gzip, br", " ZSTD "])
 async def test_fetch_decoded_bytes_are_never_inflated_again(bridge, header):
     reader = Reader([b'{"answer":', b'42}'])
     options_seen = []
@@ -165,7 +166,7 @@ async def test_fetch_decoded_bytes_are_never_inflated_again(bridge, header):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("coding", ["br", "zstd", "unknown", "gzip, br"])
+@pytest.mark.parametrize("coding", ["unknown", "gzip, unknown", "br, unknown"])
 async def test_visible_unsupported_coding_aborts_before_body_acquisition(bridge, coding):
     reader = Reader([b"already decoded"])
 

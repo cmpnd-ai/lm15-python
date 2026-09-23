@@ -55,8 +55,9 @@ class FetchTransport:
     it is the host's global. ``read_timeout`` bounds the initial fetch
     (through response headers) and each body chunk, not the whole response.
     A request's explicit ``read_timeout`` overrides it. The host decodes
-    compression; visible Content-Encoding is checked against INV-053, never
-    inflated again. CORS-hidden headers cannot be checked.
+    compression, including Brotli and Zstandard; decoded bytes are never
+    inflated again. Unknown visible codings are refused. CORS-hidden headers
+    cannot be checked.
     """
 
     def __init__(self, *, fetch: Any = None, read_timeout: float = DEFAULT_READ_TIMEOUT) -> None:
@@ -126,8 +127,13 @@ class FetchTransport:
 
             header_pairs = [(str(pair[0]), str(pair[1])) for pair in response.headers.entries()]
             # Fetch already decoded the body, even when it retains the coding
-            # header. Enforce the allowed vocabulary only; do not double inflate.
-            content_codings([v for k, v in header_pairs if k.lower() == "content-encoding"])
+            # header. Brotli/Zstandard need no Python decoder on this path.
+            # Keep refusing unknown codings without changing raw HTTP policy.
+            content_codings([
+                coding.strip().lower()
+                for k, v in header_pairs if k.lower() == "content-encoding"
+                for coding in v.split(",") if coding.strip().lower() not in {"br", "zstd"}
+            ])
             status = int(response.status)
             reason = str(response.statusText or "")
             reader = response.body.getReader() if response.body is not None else None
