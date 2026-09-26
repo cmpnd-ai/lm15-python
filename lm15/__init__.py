@@ -293,12 +293,12 @@ __all__ = [
 # nothing on the request path needs them, and lm15's import time is a
 # promise, so these names resolve lazily (PEP 562).
 _LAZY_LOGIN = {
-    "Auth": ("lm15.login", "Auth"),
-    "AsyncAuth": ("lm15.login", "AsyncAuth"),
-    "BoundClient": ("lm15.login", "BoundClient"),
-    "TerminalUI": ("lm15.login", "TerminalUI"),
-    "providers": ("lm15.login", "providers"),
-    "connect": ("lm15.interactive", "connect"),
+    "Auth": (".login", "Auth"),
+    "AsyncAuth": (".login", "AsyncAuth"),
+    "BoundClient": (".login", "BoundClient"),
+    "TerminalUI": (".login", "TerminalUI"),
+    "providers": (".login", "providers"),
+    "connect": (".interactive", "connect"),
 }
 
 
@@ -308,6 +308,6 @@ def __getattr__(name: str):
         raise AttributeError(f"module 'lm15' has no attribute {name!r}")
     import importlib
 
-    value = getattr(importlib.import_module(target[0]), target[1])
+    value = getattr(importlib.import_module(target[0], __package__), target[1])
     globals()[name] = value
     return value
