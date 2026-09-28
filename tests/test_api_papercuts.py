@@ -98,3 +98,42 @@ class TestTopLevelSurface:
 
         for name in self.FACTORY_NAMES:
             assert callable(getattr(types, name))
+
+    @pytest.mark.parametrize("surface", ["exports", "flows"])
+    def test_lazy_imports_use_the_loaded_package(self, surface):
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        code = """
+import importlib.util
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+sys.modules['lm15'] = None  # No unrelated top-level installation may be used.
+spec = importlib.util.spec_from_file_location(
+    'vendored_lm15', root / '__init__.py', submodule_search_locations=[str(root)],
+)
+package = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = package
+spec.loader.exec_module(package)
+assert 'vendored_lm15.login' not in sys.modules
+if sys.argv[2] == 'exports':
+    for name in package.__all__:
+        getattr(package, name)
+    from vendored_lm15.login import Auth
+    assert package.Auth is Auth
+    assert package.connect.__module__ == 'vendored_lm15.interactive'
+else:
+    from vendored_lm15.login.flows import descriptor, flow, ProviderFlow
+    assert descriptor('xai').id == 'xai'
+    assert isinstance(flow('xai', 'device'), ProviderFlow)
+    assert type(flow('xai', 'device')).__module__ == 'vendored_lm15.login.flows.xai'
+"""
+        result = subprocess.run(
+            [sys.executable, "-I", "-c", code,
+             str(Path(__file__).resolve().parents[1] / "lm15"), surface],
+            capture_output=True, text=True, encoding="utf-8", timeout=30,
+        )
+        assert result.returncode == 0, result.stderr

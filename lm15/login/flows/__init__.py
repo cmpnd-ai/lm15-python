@@ -53,7 +53,7 @@ def _account_flow(provider: str) -> ProviderFlow | None:
         return None
     import importlib
 
-    module = importlib.import_module(f"lm15.login.flows.{module_name}")
+    module = importlib.import_module(f".{module_name}", __package__)
     for name in dir(module):
         candidate = getattr(module, name)
         if isinstance(candidate, type) and issubclass(candidate, ProviderFlow) and candidate is not ProviderFlow:
