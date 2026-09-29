@@ -501,7 +501,7 @@ A key with no verdict at all is refused. Malformed input — a wrong JSON type, 
 - The first row, when `system` or `developer`, becomes `Request.system`; a later `system` / `developer` row becomes a `developer` message at that position.
 - Consecutive `tool` rows become **one** tool message with one `ToolResultPart` per row (`tool_call_id` → `id`, `name` → `name`).
 - An assistant row's parts come out in a fixed order: `reasoning_content` as a `ThinkingPart`, then `content`, then `refusal`, then `tool_calls` with `arguments` parsed. `content: null` with nothing else is one empty text part (a message is never empty).
-- `text` → `TextPart`; `image_url` → `ImagePart` (a data URI becomes inline data; a URL stays a URL); `input_audio` → `AudioPart`; `file` → `DocumentPart`; `refusal` → `RefusalPart`.
+- `text` → `TextPart`; `image_url` → `ImagePart` (a data URI becomes inline data; a URL stays a URL); `input_audio` → `AudioPart` (its `format` read as the media type: `wav`, `mp3`/`mpeg`, `ogg`, `opus`, `flac`, `aac`, `aiff`, `webm`; the send raises where the wire cannot carry audio); `file` → `DocumentPart`; `refusal` → `RefusalPart`.
 - A `prompt_cache_breakpoint` on the system row is `prefix="stable"`; on the last text block of message *N* it is `prefix_until_index=N`.
 
 ### Where the round trip is not exact
