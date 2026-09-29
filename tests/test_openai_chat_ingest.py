@@ -19,9 +19,10 @@ from conformance.sources import contract_root
 from lm15 import serde
 from lm15.compat import OpenAIChatCompat
 from lm15.errors import UnsupportedFeatureError
-from lm15.providers import OpenAIChatLM
+from lm15.providers import GeminiLM, OpenAIChatLM
 from lm15.providers.openai_chat import request_from_openai_chat
 from lm15.types import (
+    AudioPart,
     CacheConfig,
     Config,
     FunctionTool,
@@ -241,6 +242,7 @@ def test_breakpoints_map_to_cache_config() -> None:
     ({"model": "m", "messages": USER, "top_logprobs": 3}, ValueError),
     ({"model": "m", "messages": USER, "tool_choice": {"type": "function", "function": {"name": "ghost"}}}, ValueError),  # INV-031
     ({"model": "m", "messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:image/png,notbase64"}}]}]}, ValueError),
+    ({"model": "m", "messages": [{"role": "user", "content": [{"type": "input_audio", "input_audio": {"data": "QUJD", "format": "midi"}}]}]}, ValueError),
     ({"model": "m", "messages": [{"role": "user", "content": [{"type": "text", "text": "a", "prompt_cache_breakpoint": {"mode": "explicit"}}, {"type": "text", "text": "b"}]}]}, ValueError),  # not last
     ([], TypeError),
 ])
@@ -256,6 +258,33 @@ def test_vet_op_refuses_a_non_chat_provider() -> None:
         op_ingest_openai_chat({"provider": "anthropic", "body": body()})
     out = op_ingest_openai_chat({"provider": "openai_chat", "body": body()})
     assert out == {"canonical_request": {"model": "gpt-5-mini", "messages": [{"role": "user", "parts": [{"type": "text", "text": "Hi"}]}]}}
+
+
+# ─── input_audio formats (rule 4) ────────────────────────────────────
+
+def _audio_body(fmt: str) -> dict:
+    return {"model": "gemini-3.8-flash", "messages": [{"role": "user", "content": [
+        {"type": "text", "text": "Transcribe."},
+        {"type": "input_audio", "input_audio": {"data": "T2dnUw==", "format": fmt}},
+    ]}]}
+
+
+@pytest.mark.parametrize("fmt, media_type", [
+    ("wav", "audio/wav"), ("mp3", "audio/mpeg"), ("mpeg", "audio/mpeg"), ("ogg", "audio/ogg"),
+    ("opus", "audio/opus"), ("flac", "audio/flac"), ("aac", "audio/aac"), ("aiff", "audio/aiff"), ("webm", "audio/webm"),
+])
+def test_input_audio_reads_its_true_media_type(fmt, media_type) -> None:
+    assert request_from_openai_chat(_audio_body(fmt)) == Request(model="gemini-3.8-flash", messages=(
+        Message.user((TextPart("Transcribe."), AudioPart(media_type=media_type, data="T2dnUw=="))),
+    ))
+
+
+def test_ogg_audio_reaches_gemini_inline_and_the_chat_wire_refuses_it() -> None:
+    req = request_from_openai_chat(_audio_body("ogg"))
+    sent = json.loads(GeminiLM(api_key="k").build_request(req, stream=False).body)
+    assert sent["contents"][0]["parts"][1] == {"inlineData": {"mimeType": "audio/ogg", "data": "T2dnUw=="}}
+    with pytest.raises(UnsupportedFeatureError):
+        OpenAIChatLM(api_key="k").build_request(req, stream=False)
 
 
 # ─── message objects dumped back into history (MAP-12 addendum) ──────
