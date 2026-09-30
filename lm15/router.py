@@ -85,6 +85,7 @@ from .models import ModelInfo, ModelRegistry
 from .providers import Credential
 from .registry import PROVIDERS, Compat, ProviderDefinition, canonical_provider as _canonical_provider
 from .adaptation import AdaptationPolicy, check_policy
+from .features import AccessPolicy
 from .transports import Timeouts
 from .types import Request, Response, StreamEvent
 
@@ -943,7 +944,7 @@ def _backend_settings(config: RouterConfig, provider: str, cls: type,
     would read it."""
     from .access import resolve_backend_settings
 
-    policy = definition.access if definition is not None else cls.manifest
+    policy: AccessPolicy = definition.access if definition is not None else getattr(cls, "manifest")
     given = _settings_entry(config, provider)
     if not given and not policy.backend_settings:
         return None

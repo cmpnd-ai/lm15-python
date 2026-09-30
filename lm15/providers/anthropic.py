@@ -405,7 +405,7 @@ class AnthropicLM(BaseProviderLM):
             msg = err.get("message", "") if isinstance(err, dict) else str(err)
             err_type = str(err.get("type") or err.get("code") or "") if isinstance(err, dict) else ""
             request_id = str(data.get("request_id") or "") if isinstance(data, dict) else ""
-            if self.access.backend == "claude-code":
+            if self.access is not None and self.access.backend == "claude-code":
                 from ..access import claude_code_version_guidance
 
                 msg = claude_code_version_guidance(msg)

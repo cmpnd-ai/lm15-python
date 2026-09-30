@@ -57,7 +57,7 @@ class ClaudeCodeLM(AnthropicLM):
             settings=settings,
             adaptations=adaptations,
         )
-        self.claude_code_version = self.access.backend_options["client_version"]
+        self.claude_code_version = (self.access or CLAUDE_CODE).backend_options["client_version"]
 
     @classmethod
     def from_claude_code(

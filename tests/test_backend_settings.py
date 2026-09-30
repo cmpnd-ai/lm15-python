@@ -40,9 +40,9 @@ def _hermetic_logins(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
 
     claude = tmp_path / "claude.json"
     claude.write_text(json.dumps({"claudeAiOauth": {"accessToken": "tok", "refreshToken": "r",
-                                                    "expiresAt": int(time.time() * 1000) + 3_600_000}}))
+                                                    "expiresAt": int(time.time() * 1000) + 3_600_000}}), encoding="utf-8")
     codex = tmp_path / "codex.json"
-    codex.write_text(json.dumps({"tokens": {"access_token": "tok", "refresh_token": "r", "account_id": "acct"}}))
+    codex.write_text(json.dumps({"tokens": {"access_token": "tok", "refresh_token": "r", "account_id": "acct"}}), encoding="utf-8")
     monkeypatch.setattr(lm15.auth, "CLAUDE_CODE_CREDENTIALS_PATH", claude)
     monkeypatch.setattr(lm15.auth, "CODEX_CLI_AUTH_PATH", codex)
     monkeypatch.setenv("LM15_LOCK_DIR", str(tmp_path / "locks"))

@@ -65,7 +65,7 @@ class OpenAICodexLM(OpenAILM):
             settings=settings,
             adaptations=adaptations,
         )
-        self.client_version = self.access.backend_options["client_version"]
+        self.client_version = (self.access or OPENAI_CODEX).backend_options["client_version"]
 
     @classmethod
     def from_codex_cli(
