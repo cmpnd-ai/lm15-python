@@ -1,10 +1,12 @@
 # Changelog
 
-## Unreleased
+## 1.2.0 — 2026-09-30
 
 Claude Code and Claude defaults (lm15-contract
-`changes/2026-09-30-claude-code-client-version.md`; live receipts
-2026-09-30):
+`changes/2026-09-30-claude-code-client-version.md`, ratified 2026-09-30; contract
+`57e33d1`, 1,838 of 1,838 checks; live receipts 2026-09-30). Also since 1.1.0:
+`input_audio` in Chat Completions ingest reads ogg, opus, flac, aac, aiff, webm and
+mpeg as their true media types (#16, contract `307925a`).
 
 - **The Claude Code release lm15 claims is current and settable.** The
   `claude-code` door now says it is Claude Code 2.1.285 (it said 2.1.170,

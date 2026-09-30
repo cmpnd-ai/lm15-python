@@ -7,8 +7,10 @@ same discipline as the code — see
 
 ## Where we are (September 2026)
 
-- **1.1.0** is the current release (2026-09-26): four open-model hosts and a
-  Google Cloud pass on top of **1.0.1** (2026-09-25), the first stable one
+- **1.2.0** is the current release (2026-09-30): the Claude Code release as
+  a setting, and Claude's own output ceiling as the default `max_tokens`, on
+  top of **1.1.0** (2026-09-26: four open-model hosts and a Google Cloud
+  pass) and **1.0.1** (2026-09-25), the first stable one
   (1.0.0 was used by a June upload that was removed; PyPI never reuses a
   number). The chat
   core — canonical types, serde, errors, request building, response parsing,
