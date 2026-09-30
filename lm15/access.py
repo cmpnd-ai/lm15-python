@@ -35,8 +35,9 @@ manifest is its access policy.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, Mapping
 
 from .auth import (
     CLAUDE_CODE_LOGIN_HINT,
@@ -87,8 +88,17 @@ TYPESAFE_API = AccessPolicy(
     auth_scheme=("bearer",),
 )
 
-DEFAULT_CLAUDE_CODE_VERSION = "2.1.170"
+# The Claude Code release this door says it is (``user-agent:
+# claude-cli/<version>``).  Anthropic's server reads it: a model can require
+# a newer release (claude-opus-5-5 refuses anything before 2.1.280, live
+# 2026-09-23 and 2026-09-30).  The latest release when last receipted
+# (changes/2026-09-30-claude-code-client-version.md); callers move it
+# without a release through the ``client_version`` setting or
+# LM15_CLAUDE_CODE_VERSION (AUTH-10 backend settings).
+DEFAULT_CLAUDE_CODE_VERSION = "2.1.285"
 DEFAULT_CLAUDE_CODE_SYSTEM_PROMPT = "You are Claude Code, Anthropic's official CLI for Claude."
+CLAUDE_CODE_VERSION_ENV = "LM15_CLAUDE_CODE_VERSION"
+CODEX_CLIENT_VERSION_ENV = "LM15_CODEX_CLIENT_VERSION"
 
 # models=True: the Anthropic /v1/models endpoint answers to the OAuth
 # headers (validated live 2026-08-31, HTTP 200). Files and batch are
@@ -107,6 +117,8 @@ CLAUDE_CODE = AccessPolicy(
     ),
     login_hint=CLAUDE_CODE_LOGIN_HINT,
     backend="claude-code",
+    backend_options={"client_version": DEFAULT_CLAUDE_CODE_VERSION},
+    backend_settings=(HostSetting("client_version", env=(CLAUDE_CODE_VERSION_ENV,)),),
     system_prefix=DEFAULT_CLAUDE_CODE_SYSTEM_PROMPT,
 )
 
@@ -140,6 +152,7 @@ OPENAI_CODEX = AccessPolicy(
     login_hint=OPENAI_CODEX_LOGIN_HINT,
     backend="chatgpt-codex",
     backend_options={"client_version": DEFAULT_CODEX_CLIENT_VERSION},
+    backend_settings=(HostSetting("client_version", env=(CODEX_CLIENT_VERSION_ENV,)),),
     system_prefix=DEFAULT_CODEX_INSTRUCTIONS,
     base_url=DEFAULT_CODEX_BASE_URL,
 )
@@ -670,6 +683,92 @@ SGLANG = AccessPolicy(
     auth_modes=("bearer",),
     base_url=OPENAI_CHAT_PRESET_BASE_URLS["sglang"],
 )
+
+
+# ─── Backend settings (AUTH-10, amended 2026-09-30) ──────────────────
+
+
+def resolve_backend_settings(
+    policy: AccessPolicy,
+    given: "Mapping[str, str] | None",
+    env: "Mapping[str, str] | None" = None,
+    *,
+    sources: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """The door's backend settings: the caller's value, then ``env`` (when
+    given — the router passes the environment, an adapter built by hand
+    does not), then the table's ``backend_options`` value.  ``sources``
+    receives each origin in the AUTH-10 ``from`` vocabulary (``explicit``,
+    ``env:<VAR>``, ``default``).  A name the door does not declare is a
+    configuration error that lists the names it does: a setting nothing
+    reads would otherwise be dropped with nothing said."""
+    given = {str(k): str(v) for k, v in (given or {}).items()}
+    known = [setting.name for setting in policy.backend_settings]
+    unknown = sorted(set(given) - set(known))
+    if unknown:
+        hint = f"known: {', '.join(known)}" if known else "this door takes no settings"
+        raise NotConfiguredError(
+            f"{policy.provider}: unknown setting(s) {', '.join(repr(n) for n in unknown)}; {hint}",
+            provider=policy.provider,
+            credential_hint=(f"Pass only {', '.join(known)} for {policy.provider}" if known
+                             else f"Remove the settings entry for {policy.provider}"),
+        )
+    out: dict[str, str] = {}
+    record = sources if sources is not None else {}
+    for setting in policy.backend_settings:
+        value = given.get(setting.name) or ""
+        origin = "explicit" if value else ""
+        if not value and env is not None:
+            for var in setting.env:
+                candidate = env.get(var)
+                if candidate:
+                    value, origin = candidate, f"env:{var}"
+                    break
+        if not value:
+            value, origin = policy.backend_options[setting.name], "default"
+        out[setting.name] = value
+        record[setting.name] = origin
+    return out
+
+
+def with_backend_settings(policy: AccessPolicy, values: "Mapping[str, str]") -> AccessPolicy:
+    """The policy with these resolved backend settings in ``backend_options``.
+
+    ``client_version`` on the ``claude-code`` backend is also the version the
+    ``user-agent`` header claims (``claude-cli/<client_version>``): the one
+    backend setting that reaches a header.  On ``chatgpt-codex`` it is the
+    ``/models`` query parameter, read from ``backend_options``."""
+    from dataclasses import replace
+
+    if not values:
+        return policy
+    options = {**policy.backend_options, **values}
+    if options == dict(policy.backend_options):
+        return policy
+    out = replace(policy, backend_options=options)
+    if policy.backend == "claude-code" and "client_version" in values:
+        out = out.with_headers({"user-agent": f"claude-cli/{options['client_version']}"})
+    return out
+
+
+# Anthropic's refusal when the claimed Claude Code release is older than a
+# model requires (live 2026-09-23, 2026-09-30; errors/cases/claude-code.json).
+_CLAUDE_CODE_FLOOR = re.compile(r"Claude Code (\S+) does not support this model; version (\S+) or newer is required")
+
+
+def claude_code_version_guidance(message: str) -> str:
+    """The claude-code door's minimum-version refusal, with what an lm15
+    caller changes.  The server says "run 'claude update'", which does not
+    move the version lm15 claims; the guidance names the setting that does
+    (AUTH-10 backend settings).  Any other message is returned unchanged."""
+    match = _CLAUDE_CODE_FLOOR.search(message)
+    if match is None or "\n\n  To fix:" in message:
+        return message
+    required = match.group(2)
+    return (f"{message}\n\n  To fix:\n"
+            "    - lm15 sends this version itself; updating Claude Code does not change it\n"
+            f"    - Set the claude-code setting client_version to {required} or newer "
+            f"(or {CLAUDE_CODE_VERSION_ENV}={required})\n")
 
 
 # ─── Credential loading, keyed by provider ───────────────────────────

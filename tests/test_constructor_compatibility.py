@@ -92,9 +92,9 @@ def test_access_policy_old_constructors_and_signature():
     assert AccessPolicy(provider="review", auth_header="x-api-key").auth_scheme == ("x-api-key",)
     assert AccessPolicy("review").auth_header == "bearer"
     assert AccessPolicy("review").auth_scheme == ("bearer",)
-    assert_layout(AccessPolicy, ACCESS_NAMES, ("auth_scheme", "host"))
+    assert_layout(AccessPolicy, ACCESS_NAMES, ("auth_scheme", "host", "backend_settings"))
     assert "auth_header" not in {f.name for f in dataclasses.fields(AccessPolicy)}
-    assert {f.name for f in dataclasses.fields(AccessPolicy) if f.kw_only} == {"auth_scheme", "host"}
+    assert {f.name for f in dataclasses.fields(AccessPolicy) if f.kw_only} == {"auth_scheme", "host", "backend_settings"}
     with pytest.raises(TypeError):
         AccessPolicy(*ACCESS_VALUES, None)
 

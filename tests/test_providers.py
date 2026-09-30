@@ -527,11 +527,32 @@ def test_anthropic_reasoning_max_tokens_reserves_answer_tokens() -> None:
     payload = json.loads(lm.build_request(request, stream=False).body)
 
     assert payload["thinking"] == {"type": "enabled", "budget_tokens": 1024}
-    # MAP-13: with no Config.max_tokens the visible cap is the class default
-    # (16384 for an unknown name), recorded as `defaulted`; the wire ceiling
-    # is budget + visible.  The old silent 1024 cut answers off unseen.
-    assert payload["max_tokens"] == 1024 + 16384
-    assert [(a.field, a.action, a.applied) for a in lm.plan(request)] == [("config.max_tokens", "defaulted", 16384)]
+    # MAP-13 / MAP-7 rule 6 (amended 2026-09-30): with no Config.max_tokens
+    # a Claude name gets its output ceiling on the wire (128000 for a name
+    # the table has not met); on the manual class the visible part recorded
+    # as `defaulted` is what the budget leaves.  The old silent 1024 cut
+    # answers off unseen; the later 16384 cut off replies with reasoning on.
+    assert payload["max_tokens"] == 128000
+    assert [(a.field, a.action, a.applied) for a in lm.plan(request)] == [("config.max_tokens", "defaulted", 128000 - 1024)]
+
+
+@pytest.mark.parametrize(("model", "budget", "wire", "applied"), [
+    ("claude-opus-5-5", None, 128000, 128000),          # adaptive class: the ceiling is the total
+    ("claude-haiku-4-5", None, 64000, 64000),           # the 4.5 generation
+    ("claude-sonnet-4-5", 32768, 64000, 64000 - 32768), # manual class: the budget comes out of the ceiling
+    ("claude-haiku-4-5", 64000, 64000 + 16384, 16384),  # a budget at the ceiling: the server's 400 names it
+    ("anthropic.claude-haiku-4-5-20251001-v1:0", None, 64000, 64000),  # a cloud id carries the Claude name
+    ("claude-3-5-haiku-20241022", None, 8192, 8192),
+    ("deepseek-v4-flash", None, 16384, 16384),          # not a Claude name: that server's ceiling is its own
+])
+def test_anthropic_default_max_tokens_is_the_models_ceiling(model: str, budget: int | None, wire: int, applied: int) -> None:
+    lm = AnthropicLM(api_key="sk-ant", transport=_FakeTransport())
+    reasoning = Reasoning(effort="high", thinking_budget=budget) if budget is not None else None
+    request = Request(model=model, messages=(Message.user("hi"),), config=Config(reasoning=reasoning))
+    payload = json.loads(lm.build_request(request, stream=False).body)
+    assert payload["max_tokens"] == wire
+    assert [(a.field, a.action, a.applied) for a in lm.plan(request) if a.field == "config.max_tokens"] == [
+        ("config.max_tokens", "defaulted", applied)]
 
 
 def test_anthropic_reasoning_max_tokens_adds_explicit_visible_budget() -> None:

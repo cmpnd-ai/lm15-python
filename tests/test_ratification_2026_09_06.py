@@ -80,7 +80,9 @@ _REASONING_BODY = {
 
 @pytest.mark.parametrize("provider", ["meta", "azure", "moonshotai-responses"])
 def test_reasoning_item_state_names_the_openai_dialect_on_every_door(provider: str) -> None:
-    lm = vet.adapter_for_provider(provider, "k", None, settings={"resource": "r"})
+    # Only the cloud door takes host settings; a door that reads none now
+    # refuses a settings entry instead of dropping it (AUTH-10, 2026-09-30).
+    lm = vet.adapter_for_provider(provider, "k", None, settings={"resource": "r"} if provider == "azure" else None)
     assert isinstance(lm, OpenAILM)
     response = lm.parse_response(_REQ, _http(_REASONING_BODY))
     thinking = response.message.parts[0]

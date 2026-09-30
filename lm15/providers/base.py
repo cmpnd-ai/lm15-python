@@ -445,10 +445,17 @@ class BaseProviderLM:
         chain.  It cannot be combined with ``api_key``: two answers to "who
         am I" is a configuration error, not a precedence question.
         """
-        from ..access import load_credential
+        from ..access import load_credential, resolve_backend_settings, with_backend_settings
         from ..cloud.hosts import render_base_url, resolve_settings
 
         policy = access if access is not None else type(self).manifest
+        if policy.host is None:
+            # A door without a host: ``settings`` are its backend settings
+            # (AUTH-10, amended 2026-09-30), explicit values and the table's
+            # defaults only — the router fills env fallbacks.  A name the
+            # door does not declare raises instead of being dropped.
+            policy = with_backend_settings(policy, resolve_backend_settings(policy, settings))
+            settings = None
         self.access = policy
         self.provider = policy.provider
         endpoint = self.base_url if (policy.host is not None and default_base_url is not None

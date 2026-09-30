@@ -269,7 +269,8 @@ def explain_auth(
         raise ValueError(f"Unknown provider {provider!r}. Known providers: {', '.join(known)}")
 
     if config is not None and config.auth is not None:
-        return _explain_managed(canonical, config, api_keys=api_keys, env=env)
+        return _with_backend_settings(_explain_managed(canonical, config, api_keys=api_keys, env=env),
+                                      settings, env)
 
     policy = _credential_policy(canonical)
     if policy in ("aws-chain", "azure-chain", "gcp-chain") or (
@@ -285,7 +286,8 @@ def explain_auth(
     if policy == "oauth":
         override = claude_credentials_path if canonical == "claude-code" else codex_auth_path
         step = _oauth_step(canonical, override)
-        return AuthReport(provider=canonical, steps=(step,), configured=step.state == "selected")
+        return _with_backend_settings(AuthReport(provider=canonical, steps=(step,), configured=step.state == "selected"),
+                                      settings, env)
 
     config = RouterConfig(env=env, api_keys=api_keys)
     environment = env if env is not None else os.environ
@@ -360,7 +362,29 @@ def explain_auth(
         )
         selected = True
 
-    return AuthReport(provider=canonical, steps=tuple(steps), configured=selected)
+    return _with_backend_settings(AuthReport(provider=canonical, steps=tuple(steps), configured=selected),
+                                  settings, env)
+
+
+def _with_backend_settings(report: AuthReport, settings: Mapping[str, str] | None,
+                           env: Mapping[str, str] | None) -> AuthReport:
+    """A door without a host prints its backend settings the way a cloud
+    door prints its host settings (AUTH-7; AUTH-10 amended 2026-09-30):
+    the Claude Code release the claude-code door claims, and where that
+    came from — the value a model's minimum-version refusal is about."""
+    import os
+    from dataclasses import replace
+
+    from .access import resolve_backend_settings
+
+    definition = _bound_definition(report.provider)
+    policy = (definition.access if definition is not None and definition.bound
+              else getattr(ADAPTERS.get(report.provider), "manifest", None))
+    if policy is None or policy.host is not None or (not policy.backend_settings and not settings):
+        return report
+    sources: dict[str, str] = {}
+    values = resolve_backend_settings(policy, settings, env if env is not None else os.environ, sources=sources)
+    return replace(report, settings=tuple(values.items()), setting_sources=tuple(sources.items()))
 
 
 def _explain_managed(provider: str, config: RouterConfig, *, api_keys, env) -> AuthReport:

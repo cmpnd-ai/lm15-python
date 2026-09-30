@@ -925,6 +925,32 @@ def _env_key_for(provider: str, config: RouterConfig, adapters: Mapping[str, typ
     return env_keys[0]
 
 
+def _settings_entry(config: RouterConfig, provider: str) -> Mapping[str, str] | None:
+    """The ``settings`` entry for ``provider``, under any spelling of its name."""
+    for key, value in (config.settings or {}).items():
+        if _canonical_provider(key) == provider:
+            return value
+    return None
+
+
+def _backend_settings(config: RouterConfig, provider: str, cls: type,
+                      definition: "ProviderDefinition | None", *, sources: dict[str, str] | None = None) -> dict[str, str] | None:
+    """A door without a host: its backend settings (AUTH-10, amended
+    2026-09-30) from the config's entry, then the environment, then the
+    table's default — ``client_version`` on the subscription doors.  None
+    when the door declares none and the config gives none; a settings entry
+    for a door that reads none raises (NotConfiguredError), because nothing
+    would read it."""
+    from .access import resolve_backend_settings
+
+    policy = definition.access if definition is not None else cls.manifest
+    given = _settings_entry(config, provider)
+    if not given and not policy.backend_settings:
+        return None
+    env = config.env if config.env is not None else os.environ
+    return resolve_backend_settings(policy, given, env, sources=sources)
+
+
 def _build_lm(resolution: Resolution, config: RouterConfig, adapters: Mapping[str, type], transport: object | None = None):
     cls = _adapter_for(resolution.provider, adapters)
     definition = _bound(resolution.provider, adapters)
@@ -939,6 +965,10 @@ def _build_lm(resolution: Resolution, config: RouterConfig, adapters: Mapping[st
     base_url = _hosted_endpoint(config, resolution.provider, definition) if hosted else _base_url_entry(config, resolution.provider)
     if base_url is not None:
         extra["base_url"] = base_url
+    if not hosted:
+        door = _backend_settings(config, resolution.provider, cls, definition)
+        if door:
+            extra["settings"] = door
     policy = _credential_policy(resolution.provider, adapters)
     if config.auth is not None:
         return _build_managed_lm(resolution, config, adapters, cls, definition, extra, hosted, base_url)
@@ -1158,6 +1188,10 @@ def _build_planning_lm(resolution: Resolution, config: RouterConfig, adapters: M
         # The Codex backend derives an account id from its token at
         # construction; a placeholder token has none, so name one.
         extra["account_id"] = PLANNING_KEY
+    if definition is None or not definition.hosted:
+        door = _backend_settings(config, resolution.provider, cls, definition)
+        if door:
+            extra["settings"] = door
     if definition is None:
         return cls(**extra)
     if definition.hosted:

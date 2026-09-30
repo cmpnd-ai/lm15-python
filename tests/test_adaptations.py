@@ -123,7 +123,7 @@ def test_plan_matches_complete_and_the_record_rides_the_response() -> None:
     lm = AnthropicLM(api_key="k", transport=FakeTransport([FakeResponse(status=200, body=_ANTHROPIC_BODY)]))
     plan = lm.plan(req)
     assert [(a.field, a.action, a.applied) for a in plan] == [
-        ("config.max_tokens", "defaulted", 16384), ("config.seed", "dropped", None), ("config.temperature", "clamped", 1.0),
+        ("config.max_tokens", "defaulted", 64000), ("config.seed", "dropped", None), ("config.temperature", "clamped", 1.0),
     ]
     response = lm.complete(req)
     assert response.adaptations == plan and response.text == "hello END world"

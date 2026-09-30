@@ -272,6 +272,12 @@ class AccessPolicy:
                         prompt / instructions (Claude Code, Codex).
     ``base_url``        this access path's default base URL, when it is
                         not the dialect's.
+    ``backend_settings`` the ``backend_options`` a caller may set on a door
+                        without a host (spec/auth.md AUTH-10, amended
+                        2026-09-30): each names a ``backend_options`` key and
+                        the env variables the router consults for it; its
+                        default is the table's ``backend_options`` value.
+                        The subscription doors declare ``client_version``.
     """
 
     provider: str
@@ -288,6 +294,7 @@ class AccessPolicy:
     backend_options: Mapping[str, str] = field(default_factory=dict)
     system_prefix: str | None = None
     base_url: str | None = None
+    backend_settings: tuple[HostSetting, ...] = field(default=(), kw_only=True)
 
     # Keep the original positional API, including pattern matching. The legacy
     # header is a constructor input/property, NOT a second stored authority.
@@ -315,6 +322,7 @@ class AccessPolicy:
         *,
         auth_scheme: AuthScheme | Sequence[AuthScheme] = ("bearer",),
         host: HostSpec | None = None,
+        backend_settings: Sequence[HostSetting] = (),
     ) -> None:
         # None means the legacy spelling was omitted (the effective default
         # remains bearer). An explicit legacy header overrides the scheme input:
@@ -339,6 +347,7 @@ class AccessPolicy:
         object.__setattr__(self, "backend_options", {} if backend_options is None else backend_options)
         object.__setattr__(self, "system_prefix", system_prefix)
         object.__setattr__(self, "base_url", base_url)
+        object.__setattr__(self, "backend_settings", backend_settings)
         self.__post_init__()
 
     def __post_init__(self) -> None:
@@ -365,6 +374,17 @@ class AccessPolicy:
         object.__setattr__(self, "enterprise_variants", tuple(self.enterprise_variants))
         object.__setattr__(self, "headers", tuple((str(k), str(v)) for k, v in self.headers))
         object.__setattr__(self, "backend_options", dict(self.backend_options))
+        object.__setattr__(self, "backend_settings", tuple(self.backend_settings))
+        for setting in self.backend_settings:
+            # A backend setting's default is the table's backend_options
+            # value: one authority for the value a door sends by default.
+            if setting.default is not None:
+                raise ValueError(f"{self.provider}: backend setting {setting.name!r} takes its default "
+                                 "from backend_options, not HostSetting.default")
+            if setting.name not in self.backend_options:
+                raise ValueError(f"{self.provider}: backend setting {setting.name!r} has no backend_options default")
+        if self.backend_settings and self.host is not None:
+            raise ValueError(f"{self.provider}: a door with a host declares its settings on the host")
 
     @property
     def auth_header(self) -> AuthHeader:

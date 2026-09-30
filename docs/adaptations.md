@@ -21,7 +21,7 @@ response = router.complete(Request(
 
 for a in response.adaptations:
     print(a.field, a.action, a.asked, "->", a.applied)
-# config.max_tokens  defaulted  None -> 16384
+# config.max_tokens  defaulted  None -> 64000
 # config.seed        dropped    42   -> None
 # config.temperature clamped    1.5  -> 1.0
 ```
@@ -42,7 +42,7 @@ thinking budget — is the adapter's job and is never recorded.
 | `substituted` | the closest spelling went instead | `summary="concise"` → `"auto"`; `reasoning="off"` → the lowest level where no off switch exists |
 | `client_side` | lm15 does it after the wire | `stop` on the OpenAI Responses API (streamed and cut at the sequence, even on a plain call); a tool allowlist sent as only those tools |
 | `satisfied` | the provider's default already is what you asked | `store=False` on Anthropic, which keeps no retrievable copy |
-| `defaulted` | the wire requires a value you did not set | Anthropic `max_tokens` (the class ceiling, not a silent 1024) |
+| `defaulted` | the wire requires a value you did not set | Anthropic `max_tokens` (a Claude model's own output ceiling — 128000 for the 4.6 generation and later, 64000 for 4.5; 16384 on other servers — not a silent 1024) |
 
 Each record carries `field` (the config path), `action`, `asked`,
 `applied`, and a one-sentence `reason` naming the provider fact.

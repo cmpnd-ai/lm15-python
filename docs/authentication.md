@@ -161,6 +161,29 @@ another process, or by lm15's own expiry refresh — are picked up
 without rebuilding the client. Both adapters are also routable
 (`claude-code:...`, `openai-codex:...`).
 
+**Which Claude Code release lm15 claims.** The Claude Code door tells
+Anthropic which Claude Code release it is (`user-agent:
+claude-cli/<version>`), and a new model can require a newer one:
+
+```text
+InvalidRequestError: Claude Code 2.1.170 does not support this model; version 2.1.280 or newer is required. ...
+```
+
+Updating the `claude` program does not change what lm15 sends. lm15 ships
+with the latest release it has tested (`lm15.access.DEFAULT_CLAUDE_CODE_VERSION`);
+when a model needs a newer one before lm15's next release, set it:
+
+```python
+router = lm15.LMRouter(lm15.RouterConfig(settings={"claude-code": {"client_version": "2.1.290"}}))
+```
+
+or, with no code change, `LM15_CLAUDE_CODE_VERSION=2.1.290` in the
+environment (the router reads it; an adapter you build yourself takes
+`ClaudeCodeLM(settings={"client_version": "2.1.290"})`). The Codex door's
+`client_version` works the same way (`LM15_CODEX_CLIENT_VERSION`).
+`lm15.doctor.explain_auth("claude-code")` prints the release in use and
+where it came from.
+
 xAI sells subscription access too (SuperGrok / X Premium), but ships
 no CLI credential file — so lm15 runs the device-code login itself,
 once, and stores the credential locally:
@@ -222,8 +245,9 @@ print(lm.access.provider, lm.supports.files)    # 'openai-codex' False
 This is what lets a Go or Rust port carry the same facts as a table
 instead of a class hierarchy. The policy table and its consult points are
 normative (contract `spec/auth.md` AUTH-10). Custom policies are ordinary
-values too — `CLAUDE_CODE.with_headers({...})` is how `claude_code_version`
-is applied.
+values too. A door's `backend_settings` (today `client_version` on the two
+subscription doors) are the options a caller may change; the router fills
+them from `settings`, then the environment, then the table.
 
 ## Keyless local servers
 

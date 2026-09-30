@@ -97,7 +97,10 @@ def adapter_for_provider(provider: str, api_key: Any, base_url: str | None = Non
         if definition.compat is not None:
             # The Gemini dialect takes no compat (the router does the same).
             kwargs["compat"] = definition.compat
-    if definition.hosted:
+    if definition.hosted or settings:
+        # A cloud door's host settings, or a door's backend settings
+        # (client_version on the subscription doors; AUTH-10 amended
+        # 2026-09-30).  The shim passes exactly these and reads no environment.
         kwargs["settings"] = settings
     if clock is not None:
         kwargs["clock"] = clock

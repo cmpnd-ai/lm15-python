@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+Claude Code and Claude defaults (lm15-contract
+`changes/2026-09-30-claude-code-client-version.md`; live receipts
+2026-09-30):
+
+- **The Claude Code release lm15 claims is current and settable.** The
+  `claude-code` door now says it is Claude Code 2.1.285 (it said 2.1.170,
+  which `claude-opus-5-5` refuses: "version 2.1.280 or newer is required").
+  When a model needs a newer release before lm15's next one, set
+  `RouterConfig(settings={"claude-code": {"client_version": "..."}})` or
+  `LM15_CLAUDE_CODE_VERSION` (the router reads it), or pass
+  `ClaudeCodeLM(settings={"client_version": ...})`; `claude_code_version=`
+  still works. The Codex door's `client_version` is the same setting
+  (`LM15_CODEX_CLIENT_VERSION`). `explain_auth` prints the release and where
+  it came from.
+- **The refusal says what to change**: the server's "run claude update"
+  does not move what lm15 sends, so the error now names the setting.
+- **A settings entry nothing reads raises** `NotConfiguredError` (it was
+  ignored), naming the settings that door does take.
+- **Claude's default `max_tokens` is the model's own output ceiling**:
+  128000 for the 4.6 generation and later, 64000 for 4.5 (it was 16384,
+  which replies with reasoning on routinely ran out of). On the manual
+  class the ceiling covers the thinking budget too. Other models on
+  Anthropic-dialect servers keep 16384. Recorded as `defaulted`, as before.
+- The note for a `thinking_budget` dropped on an adaptive-class Claude says
+  what bounds thinking there: `max_tokens` (thinking and answer together).
+
 ## 1.1.0 — 2026-09-26
 
 New providers and a Google Cloud pass, both live-verified in Python,
