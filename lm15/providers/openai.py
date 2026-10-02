@@ -959,7 +959,7 @@ class OpenAILM(BaseProviderLM):
             tools_wire: list[dict[str, Any]] = []
             for tool in request.tools:
                 if isinstance(tool, FunctionTool):
-                    tool_payload = {
+                    tool_payload: dict[str, Any] = {
                         "type": "function",
                         "name": tool.name,
                         **tool_description(tool.description),

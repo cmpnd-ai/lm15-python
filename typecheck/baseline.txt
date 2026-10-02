@@ -1,6 +1,6 @@
 # Known mypy findings inside lm15/ (tools/typecheck.py). Count, then path|code|message.
 # The gate fails on anything new, and on any entry that no longer occurs.
-# Total: 452
+# Total: 451
 2 lm15/_authlock.py|assignment|Incompatible types in assignment (expression has type "None", variable has type Module)
 4 lm15/access.py|union-attr|Item "AwsCredentials" of "ApiKey | BearerToken | AwsCredentials" has no attribute "value"
 1 lm15/auth.py|arg-type|Argument "ui" to "login" of "Auth" has incompatible type "_EchoUI"; expected "AuthUI"
@@ -152,7 +152,6 @@
 1 lm15/providers/openai.py|arg-type|Argument 1 to "resolve_credential_value" has incompatible type "str | ApiKey | BearerToken | AwsCredentials | Callable[[], str | ApiKey | BearerToken | AwsCredentials] | None"; expected "str | ApiKey | BearerToken | AwsCredentials | Callable[[], str | ApiKey | BearerToken | AwsCredentials]"
 1 lm15/providers/openai.py|assignment|Incompatible types in assignment (expression has type "AccessPolicy | None", base class "BaseProviderLM" defined the type as "AccessPolicy")
 1 lm15/providers/openai.py|assignment|Incompatible types in assignment (expression has type "Literal['developer', 'system']", variable has type "Literal['user', 'assistant', 'developer']")
-1 lm15/providers/openai.py|assignment|Incompatible types in assignment (expression has type "bool", target has type "dict[str, JsonValue] | str | None")
 1 lm15/providers/openai.py|assignment|Incompatible types in assignment (expression has type "dict[str, str]", target has type "str")
 1 lm15/providers/openai.py|misc|Value expression in dictionary comprehension has incompatible type "bool | int | float | str | None | list[JsonValue] | dict[str, JsonValue]"; expected type "str | list[dict[str, Any]]"
 1 lm15/providers/openai.py|union-attr|Item "None" of "AccessPolicy | None" has no attribute "backend"
