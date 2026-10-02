@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- **A tool with no description works on every provider.** A
+  `FunctionTool` built with only a name and parameters was sent with
+  `"description": null`, which Anthropic and Groq refuse with a 400
+  ("Input should be a valid string", "Value is not nullable"); OpenAI,
+  Gemini and the other servers tolerated it. The description key is now
+  left out when the tool has none (`""` counts as none, as it already does
+  in lm15's own JSON), on every wire: Messages, Responses, Chat
+  Completions, Gemini (including cached prefixes and Live), and OpenAI
+  Realtime. A tool that has a description is sent exactly as before.
+  lm15-contract MAP-17 (`changes/2026-10-02-tool-description-absent.md`),
+  live receipts on 11 HTTP wires and both live sessions; contract
+  `f6465c8`.
+
 ## 1.2.0 — 2026-09-30
 
 Claude Code and Claude defaults (lm15-contract
