@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **Long streamed replies no longer fail at the last moment.** The stream
+  reader refused any line over 64 KB and any event over 1 MB
+  (`TransportError: SSE line exceeds limit (68021 > 65536)`), and real
+  streams are larger: OpenAI Responses repeats the whole response, system
+  prompt included, in its first and last events, so a long answer or a
+  long system prompt failed after the answer had been generated and billed;
+  its image tool sends a 4.2 MB line, and Gemini sends a 4K image as one
+  29.7 MB line. Streams now take an event of any size, as a non-streamed
+  reply always did; `lm15.sse.parse_sse()` keeps `max_line_bytes=` /
+  `max_event_bytes=` as opt-in caps. Splitting a long line out of many
+  network reads is now linear (a 30 MB line: 0.2 s, was 3.5 s, growing with
+  the square of its length). lm15-contract INV-056
+  (`changes/2026-10-06-sse-event-bound.md`), live case
+  `openai.streaming_long_line` (three 1.1 MB lines).
+
 - **A tool with no description works on every provider.** A
   `FunctionTool` built with only a name and parameters was sent with
   `"description": null`, which Anthropic and Groq refuse with a 400

@@ -154,6 +154,13 @@ async with transport.stream(req) as resp:
 objects. Provider LMs then parse those SSE payloads into typed
 `StreamEvent`s.
 
+Neither sets a size limit: one provider event can be megabytes on a single
+line (OpenAI Responses repeats the whole response in `response.completed`;
+Gemini sends a generated image as one line), and `iter_lines()` stays linear
+in the bytes however long a line is. Pass `max_line_bytes=` /
+`max_event_bytes=` to `parse_sse()` if you want caps; going over one raises
+`TransportError`.
+
 ## Connection pooling
 
 A `StdlibTransport` owns a keep-alive pool keyed by origin `(scheme, host,

@@ -65,7 +65,15 @@ most exposed code and is written accordingly:
   malformed or negative `Content-Length` is rejected; data past the
   declared length is a protocol error. These are the classic
   request-smuggling and desync levers.
-- SSE streams enforce a 64 KB per-line and 1 MB per-event limit.
+- SSE streams set no size limit on a line or an event, the same as a
+  non-streamed body (lm15-contract INV-056). Until 2026-10 they refused
+  lines over 64 KB and events over 1 MB, which rejected real replies (a
+  long system prompt echoed by OpenAI Responses, a 29.7 MB Gemini 4K
+  image in one line) without bounding memory: the stream is accumulated
+  into the whole reply anyway. A server you point lm15 at can make it
+  hold a large reply in memory in either mode; lm15 has no whole-reply
+  size bound today. `lm15.sse.parse_sse(max_line_bytes=...,
+  max_event_bytes=...)` still takes opt-in caps.
 - Connect, read, and write timeouts all have non-infinite defaults.
 
 ### Trick the library into running code
