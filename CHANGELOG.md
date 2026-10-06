@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 1.2.1 — 2026-10-06
+
+Two fixes, no new API (lm15-contract `0f3ea82`, 1,901 of 1,901 checks; INV-056
+and MAP-17, both with live receipts).
 
 - **Long streamed replies no longer fail at the last moment.** The stream
   reader refused any line over 64 KB and any event over 1 MB
