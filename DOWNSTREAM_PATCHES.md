@@ -27,13 +27,18 @@ unpatched and do not rewrite published integration branches.
    Renewal cannot silently change a known account ID. Regression coverage in
    tests/test_managed_dispatch.py includes sync/async replacement, renewal,
    logout races, batch upload/submit, explicit endpoints and offline planning.
+4. `046f2bfa5c12b55c6a199f388879e5d689397a87`: preserve the retained
+   adapter's transport and adaptation policy when preparing an operation.
+   Sync/async regressions verify the documented transport replacement escape
+   hatch sends only through the caller's replacement transport.
 
 The first two fixes originate on cmpnd-ai/lm15-python branch fix/managed-auth-review.
 Upstream PR submission was denied by GitHub integration permissions; neither
 patch is claimed to be merged upstream. Check for an existing upstream PR
 before attempting submission again.
 
-The third fix is a downstream implementation pending upstream contribution.
+The routing fixes are published on fix/managed-request-snapshots for upstream
+contribution; PR creation is still denied by integration permissions.
 Managed websocket operations and raw request builders that bypass operation
 preparation fail closed; explicit/unmanaged credentials retain their existing
 behavior. No shared adapter fields are mutated during requests. A snapshot
