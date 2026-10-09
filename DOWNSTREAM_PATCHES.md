@@ -19,21 +19,32 @@ unpatched and do not rewrite published integration branches.
    must not delete saved credentials. The regression in tests/test_login.py
    checks preserved credentials/revision, cleared in-flight state, no automatic
    retry and a successful later renewal.
+3. `dd0662c866dfd208ffed443f071e10123170ef0e`: keep credentials, account
+   headers and endpoints in one per-operation snapshot. Retained adapters
+   acquire the active connection for each operation; bound clients retain their
+   selected identity. Dispatch checks the snapshot's generation before every
+   transport handoff, including delayed streams and multi-wire operations.
+   Renewal cannot silently change a known account ID. Regression coverage in
+   tests/test_managed_dispatch.py includes sync/async replacement, renewal,
+   logout races, batch upload/submit, explicit endpoints and offline planning.
 
-Both fixes originate on cmpnd-ai/lm15-python branch fix/managed-auth-review.
+The first two fixes originate on cmpnd-ai/lm15-python branch fix/managed-auth-review.
 Upstream PR submission was denied by GitHub integration permissions; neither
 patch is claimed to be merged upstream. Check for an existing upstream PR
 before attempting submission again.
 
-The stale managed account/endpoint routing issue is NOT fixed by this stack.
-Retained sync/async adapters can combine a new token with an old account or
-endpoint, and logout before dispatch is not checked. DSPy PR #10540 must remain
-draft until coherent operation snapshots and dispatch admission are implemented
-and tested. Do not mistake the passing existing contract suite for coverage of
-these independently reproduced races.
+The third fix is a downstream implementation pending upstream contribution.
+Managed websocket operations and raw request builders that bypass operation
+preparation fail closed; explicit/unmanaged credentials retain their existing
+behavior. No shared adapter fields are mutated during requests. A snapshot
+admitted before logout may still reach the transport: logout cannot recall an
+already admitted request. Keep DSPy PR #10540 draft until its integration and
+review follow-through complete; passing existing contract tests alone does not
+demonstrate the new race regressions.
 
-Validation against this package tree: 272 focused tests passed, 2 skipped;
-3651 full-suite tests passed, 9 skipped, with only the two known orb reserved-IP
-connect-timeout failures. Strict conformance and all 18 pinned contract harness
-directions passed. The exact upstream release's CI passed. No live provider
-calls were used.
+The first two patches were validated with 3651 tests passing, 9 skipped and the
+two approved orb reserved-IP connect-timeout failures. For the third patch,
+72 focused auth/dispatch tests passed; the retained-adapter endpoint regression
+fails against the two-patch baseline. Full source, strict conformance, pinned
+contract and type checks must be rerun on every changed stack. No live provider
+calls are needed.
