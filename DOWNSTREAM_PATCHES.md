@@ -32,16 +32,45 @@ unpatched and do not rewrite published integration branches.
    preparing an operation. Sync/async regressions verify the documented
    transport replacement escape hatch sends only through the caller's
    replacement transport.
+5. `8671868feb55408c2a11bbea2413f9a7d70ebe9b`: expose the descriptor
+   collection as `lm15.login_providers` (also `lm15.login.providers`).
+   The attempted lazy `providers` export was hidden by the existing provider
+   implementation package. Keep that package and its submodules intact.
+   Fresh-interpreter import-order regressions live in tests/test_login_exports.py.
+6. `cd7ef071d0399af28b0e88a71bfd11f97a859cb8`: wait for dismissed terminal
+   manual input to relinquish stdin before returning to a subsequent picker.
+   The existing "press Enter to continue" interaction remains; no portable
+   cancellation of blocking input is assumed. Tests/test_terminal_login.py
+   covers a real loopback callback with controlled input, early dismissal,
+   completed reads and interrupted reads.
+7. `a838f91648c844416d75697273c38646caddec8f`: resolve sibling routes to
+   their advertised saved connection for requests, renewal, status and
+   logout; explicit route slots (including logout markers) take precedence.
+   Async task cancellation signals and durably releases only its own login
+   attempt before returning CancelledError. A commit already won is not
+   undone. Verification pins the checked connection and records results
+   only if its identity/generation still matches. Tests/test_login.py covers
+   all three Meta routes with remint/endpoint change/logout, cooperative and
+   non-cooperative cancelled login workers, and valid/rejected verification
+   with and without concurrent replacement.
 
-All four patches remain necessary in v1.3.0. Its Meta login changes supply
+The first four patches remain necessary in v1.3.0. Its Meta login changes supply
 the minted endpoint and plan; they do not change bound selection, renewal
 HTTP 429 handling or managed dispatch. The replay has no patch-content
 changes from the validated v1.2.3 stack. Meta login remains unverified and
 requires explicit opt-in because of the documented terms and data-use risks.
 
+Patches 5–7 address five reproduced findings from DSPy #10540's October 13
+Greptile review. The focused before/after run failed 14 cases on the previous
+tip (with 3 controls passing); all pass after the fixes. These new patches
+are downstream only and are published on the integration and contribution
+branches below, not claimed submitted or merged upstream.
+
 The first two fixes originate on cmpnd-ai/lm15-python branch
 fix/managed-auth-review. The routing fixes are published on
-fix/managed-request-snapshots. Upstream PR submission was denied by GitHub
+fix/managed-request-snapshots, with the 1.3.0 stack and review fixes on
+fix/managed-request-snapshots-1.3.0 and integration/lm15-1.3.0-patches.
+Upstream PR submission was denied by GitHub
 integration permissions; no patch is claimed to be merged upstream. Check
 for an existing upstream PR before attempting submission again.
 
