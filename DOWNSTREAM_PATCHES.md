@@ -53,6 +53,12 @@ unpatched and do not rewrite published integration branches.
    all three Meta routes with remint/endpoint change/logout, cooperative and
    non-cooperative cancelled login workers, and valid/rejected verification
    with and without concurrent replacement.
+8. `c9d45beb2744835a79bc46ea7aa8d2e209f9139e`: keep the post-approval
+   cancellation/deadline check inside the existing typed-error boundary.
+   Self-review of patch 7 reproduced a raw LoginExpired escaping if approval
+   finished after the deadline. The public regression in tests/test_login.py
+   now gets AuthOperationError(reason="login_expired"), persists no credential,
+   and can start a new login immediately. This patch is downstream only.
 
 The first four patches remain necessary in v1.3.0. Its Meta login changes supply
 the minted endpoint and plan; they do not change bound selection, renewal
