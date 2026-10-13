@@ -59,6 +59,17 @@ unpatched and do not rewrite published integration branches.
    finished after the deadline. The public regression in tests/test_login.py
    now gets AuthOperationError(reason="login_expired"), persists no credential,
    and can start a new login immediately. This patch is downstream only.
+9. `dd900d292a393c6c04fab7d1c57248dfee25e90b`: preserve the originally
+   requested route through renewal and re-resolve it at dispatch admission.
+   A newly saved or signed-out route-specific slot must supersede the shared
+   owner even for an already prepared request. Run durable async login
+   cancellation on an independent executor so a blocked login cannot occupy
+   the only worker available to release its reservation. The second Greptile
+   review reproduced both races. Four sync/async route replacement/logout
+   cases and two one-worker cancellation cases fail before and pass after.
+   Cancellation frees the reservation before the login worker is released;
+   it does not interrupt blocking terminal input or undo a completed commit.
+   These fixes are downstream only, pending upstream contribution access.
 
 The first four patches remain necessary in v1.3.0. Its Meta login changes supply
 the minted endpoint and plan; they do not change bound selection, renewal
