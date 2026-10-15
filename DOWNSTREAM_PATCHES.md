@@ -70,8 +70,21 @@ unpatched and do not rewrite published integration branches.
    Cancellation frees the reservation before the login worker is released;
    it does not interrupt blocking terminal input or undo a completed commit.
    These fixes are downstream only, pending upstream contribution access.
+10. `359f90953dd90089c306ceb5a69fe10bbb14c483`: preserve the selected account
+    and saved cloud settings. Bound clients and saved-account model listing
+    discard config identity overrides while retaining execution settings;
+    ordinary routers keep their explicit-identity precedence. Managed cloud
+    operations merge the selected snapshot's settings before explicit router
+    settings, including on retained sync/async adapters after replacement.
+    The October 15 Greptile review reproduced wrong-account dispatch and
+    ignored project/region selection. Ten public-operation cases fail before
+    and pass after, covering catalog/inference keys, named cloud identities,
+    logout/replacement, absent/conflicting ambient settings and partial
+    explicit overrides. Tests live in tests/test_login.py and
+    tests/test_managed_dispatch.py. This patch is downstream only, pending
+    upstream contribution access.
 
-All nine patches remain necessary in v1.4.0: the only runtime changes from
+The first nine patches remain necessary in v1.4.0: the only runtime changes from
 v1.3.0 are its version and TypeSafe image encoding. None of the patched
 login/routing owners changed. The replay has no patch-content changes from
 the validated v1.3.0 stack; each replay commit records its previous commit.
