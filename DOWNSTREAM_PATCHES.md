@@ -84,6 +84,21 @@ unpatched and do not rewrite published integration branches.
     explicit overrides. Tests live in tests/test_login.py and
     tests/test_managed_dispatch.py. This patch is downstream only, pending
     upstream contribution access.
+11. `c4686f8343a1f0c47e33141ab114877d4f6b723b`: preserve billed usage when
+    nonstream OpenAI Chat Completions or Responses parsing raises a
+    ProviderError (including a tool call with no name). The original error
+    carries an accounting-only `partial` Response with finish reason `error`;
+    it is never returned as a successful completion. Both sync and async
+    drivers use the same dialect readers. Usage is read from the already
+    decoded body using the normal usage mapping, not by reparsing output.
+    Invalid or absent usage leaves the original failure intact; an existing
+    partial is never replaced. HTTP errors, streams and other dialects are
+    unchanged. Tests in tests/test_complete_partial_usage.py cover counters,
+    totals, details, malformed telemetry, successful output and diagnostics.
+    This downstream patch is based on DSPy's exact source pin
+    `1c6a5c7a9a87482db2b61817847f4ece04339df2`, on branch
+    `fix/preserve-billed-usage`. It is not merged upstream. CONTRACT_PIN is
+    unchanged.
 
 The first nine patches remain necessary in v1.5.0. Replay conflicts preserve
 upstream's measurable-judgment filtering, bounding_box export and typed
@@ -122,3 +137,22 @@ import. The only approved orb exceptions are the sync/async reserved-IP
 connect-timeout tests, with passing exact-release upstream CI. Do not infer
 that passing existing contract tests alone demonstrates the race regressions.
 No live provider calls are needed.
+
+Patch 11 validation (2026-10-23): 61 new source cases pass. The full source
+suite on Python 3.14.7 reports 3832 passed, 9 skipped, and only the two
+reserved-IP connect-timeout failures named above; those same two failures
+reproduce on the unchanged source pin. Exact-release upstream CI is green:
+https://github.com/lm15-dev/lm15-python/actions/runs/38822533894
+(all Python/platform test legs, contract and typecheck).
+Strict conformance, all directions of the exact pinned contract harness,
+and the type-check gate pass (32 user programs, no new package findings).
+Without editing DSPy's vendor or tests, a process-local package import
+redirect to this source checkout passes all 56 failure-lifecycle cases and
+13 engine-execution cases on Python 3.11. The four native conversion-failure
+regressions fail on the unchanged pin (usage missing) and pass with patch 11,
+including no retry, cache or history writes. A combined DSPy run in a fresh
+LiteLLM-free Python 3.14 environment with the same redirect reports 3057
+passed, 341 skipped, 2 xfailed and two packaging failures: those tests look
+for DSPy's provenance files beside the redirected source checkout, where
+they do not exist. Combined post-import and installed-wheel validation
+remain the downstream maintainer's responsibility.
