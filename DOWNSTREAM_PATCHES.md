@@ -8,7 +8,7 @@ Replay these commits in order on a newer eligible release, omitting a patch
 only when its regression is covered by the upstream release. Keep fork main
 unpatched and do not rewrite published integration branches.
 
-The v2.0.0 replay retains all ten patches, in the same order:
+The v2.0.0 replay retains all eleven patches, in the same order:
 
 1. `df7d2448746864d4a232b842b52f00634f9a61d3`
 2. `2038002904f4dbe8870c5743fa86a0089057e22d`
@@ -20,11 +20,13 @@ The v2.0.0 replay retains all ten patches, in the same order:
 8. `26f2e96399678932feec69a0301ecfcc35ff9a6b`
 9. `a1771010164e3b4f6e5be7c01403afb0dcd1056f`
 10. `81ff7871beedd3a2368c060792ed091f9ee3c89d`
+11. `604403057adf0373824691430ffaca55c8395e1c`
 
 Upstream's release changes usage normalization and pricing, not the managed
-identity/login defects below. All patches replay without conflicts; provider
-changes compose with the existing operation snapshots. Source validation:
-3,797 passed, 9 skipped, and only the two approved reserved-IP connect-timeout
+identity/login defects below. The first ten patches replay without conflicts;
+patch 11 reuses the new canonical usage readers and retains the adapter's
+separate-reasoning policy during error accounting. Source validation:
+3,859 passed, 9 skipped, and only the two approved reserved-IP connect-timeout
 exceptions; exact-release upstream CI passed. Strict conformance, all pinned
 contract harness directions, constructor signatures and type checks pass.
 The stack is on integration/lm15-2.0.0-patches and the separate contribution
@@ -32,6 +34,15 @@ branch fix/managed-request-snapshots-2.0.0. Prior published stacks remain intact
 
 The following numbered motivations retain their v1.5.0 and original commit
 identities for traceability; each corresponds to the same replay number above.
+
+11. `c4686f8343a1f0c47e33141ab114877d4f6b723b`: preserve billed usage on
+    nonstream OpenAI Chat/Responses parsing failures. Added to DSPy's 1.5.0
+    snapshot on October23; dropping it loses usage when a reply contains an
+    unnamed tool call. Tests/test_complete_partial_usage.py covers sync/async
+    error accounting, malformed telemetry, missing and inconsistent totals,
+    successful controls, and separate reasoning. The replay uses 2.0's
+    canonical unknown-counter semantics instead of constructing invalid Usage.
+    This patch remains downstream pending upstream contribution access.
 
 1. `cc8a5b20763718faf4a70a1f8c5bd902eccb7827` (original `bf96a4fe32edfa72125a2f9c2ee7ea0cc206c655`):
    enforce the selected model for keyword requests as well as explicit Request
