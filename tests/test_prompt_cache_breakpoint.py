@@ -157,6 +157,34 @@ def test_chat_breakpoint_on_assistant_message_walks_back() -> None:
     assert out["config.cache.prefix_until_index"].applied == 0
 
 
+@pytest.mark.parametrize("adapter, key", [(OpenAIChatLM, "messages"), (OpenAILM, "input")])
+@pytest.mark.parametrize("parts, expected_index", [
+    ((TextPart(""),), 0),
+    ((TextPart(""), TextPart("")), 0),
+    ((TextPart("kept"), TextPart("")), 1),
+    ((TextPart(" "),), 1),
+    ((ImagePart(url="https://x/y.png"), TextPart("")), 0),
+])
+def test_cache_boundary_uses_the_last_nonempty_part(adapter, key, parts, expected_index):
+    request = _req(1, messages=(Message.user("prefix"), Message.user(parts), Message.user("question")))
+    lm = adapter(api_key="k", transport=FakeTransport([]))
+    rows = _body(lm, request)[key]
+    marked = [i for i, row in enumerate(rows) if "prompt_cache_breakpoint" in json.dumps(row)]
+    assert marked == [expected_index]
+    assert "prompt_cache_breakpoint" not in json.dumps(rows[-1])
+    if expected_index == 0:
+        assert next(a for a in lm.plan(request) if a.field == "config.cache.prefix_until_index").applied == 0
+    assert request.messages[1].parts == parts
+
+
+@pytest.mark.parametrize("adapter", [OpenAIChatLM, OpenAILM])
+def test_an_empty_cache_prefix_drops_the_mark_not_the_request(adapter):
+    request = _req(0, messages=(Message.user(""), Message.user("question")))
+    lm = adapter(api_key="k", transport=FakeTransport([]))
+    assert next(a for a in lm.plan(request) if a.field == "config.cache.prefix_until_index").action == "dropped"
+    assert "prompt_cache_breakpoint" not in json.dumps(_body(lm, request))
+
+
 def test_chat_parse_cache_write_tokens() -> None:
     lm = OpenAIChatLM(api_key="k", transport=FakeTransport([]))
     body = {
