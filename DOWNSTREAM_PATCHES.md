@@ -8,7 +8,8 @@ Replay these commits in order on a newer eligible release, omitting a patch
 only when its regression is covered by the upstream release. Keep fork main
 unpatched and do not rewrite published integration branches.
 
-The v2.3.1 replay retains all twelve patches in the same order:
+The v2.3.1 replay retains all twelve patches in the same order and adds two
+review fixes for defects reproduced on that release:
 
 1. `28ac4ccc00d1c3e5e0d581bcccec7c3f0c49d287`
 2. `4d189d8fa9f21e4a53c09a8efe059d6588cbbdc8`
@@ -22,6 +23,8 @@ The v2.3.1 replay retains all twelve patches in the same order:
 10. `ff987286b5b3af2937136c68acc7aa26673d4a85`
 11. `a83176d325ab828924284c1d9662bd8a5f1e70b0`
 12. `d0859dee1e67ed7c06a349ab2bed83f43ad0ac2b`
+13. `b824197ac84a983a6fde7c43ac817afee1e2b206`
+14. `a253471cda9b1a2ce6853dda40c228f3d2b4d4b2`
 
 Patch-retirement audit: upstream adds Tinker routing, stop-sequence cutting,
 FastAPI errors, empty-part filtering and assistant DataPart history replay.
@@ -46,11 +49,35 @@ retired or replaced in 2.3.1; clean cherry-picks alone were not the evidence.
 
 Exact-release upstream CI 42948973462 and tag CI 42950548935 pass. Strict
 conformance, the pinned harness and types pass (32 user programs, zero new
-findings). Full source suite: 4,016 passed, 9 skipped, with only the two
+findings). After the review fixes, full source suite: 4,034 passed, 9 skipped, with only the two
 approved reserved-IP connect-timeout orb exceptions. The stack is on
 integration/lm15-2.3.1-patches and the separate
 contribution branch fix/managed-request-snapshots-2.3.1. Prior stacks and the
 standalone fix/stream-final-json-types-2.1.0 contribution remain intact.
+
+13. Select explicit OpenAI cache boundaries after excluding empty text
+    parts. Greptile on DSPy #10872 found that MAP-24 filtering made both
+    Chat and Responses abort on user("") at prefix_until_index. Eight new
+    source cases fail before and pass after, including no earlier eligible
+    prefix and a final image followed by empty text. Four whitespace and
+    trailing-real-text controls pass both times. Public build_request/plan
+    tests live in tests/test_prompt_cache_breakpoint.py. The boundary moves
+    backward or is dropped with the existing adaptation; the question is
+    never included. DSPy's public sync/async LM probe also fails all eight
+    cases before import. Prepared with patch 14 for a standalone upstream
+    contribution on fix/empty-cache-and-prefixed-stop-2.3.1; submission is
+    not claimed successful until upstream grants access.
+
+14. Resolve Chat stop policy against the same normalized wire model as the
+    writer. Greptile on DSPy #10872 found that a direct adapter call with
+    openai-chat:custom missed the custom model_overrides entry on reply
+    parsing. Complete and stream both reproduce the retained STOP text
+    before the fix; bare-name and unaffected-model controls pass both
+    times. tests/test_tinker.py checks text, normalized wire model and all
+    12 billed tokens, including usage after the streaming stop. The public
+    DSPy facade exposes this adapter; ordinary routed LMs already normalize
+    the model before dispatch. The combined cache/Tinker source suite is
+    70 passed after both fixes (10 failed, 60 passed before).
 
 12. Distinguish JSON booleans from numbers when comparing argument fragments
     with their final copy (MAP-20). Python treats true == 1 and false == 0;
