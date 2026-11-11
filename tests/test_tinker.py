@@ -18,7 +18,7 @@ from lm15.compat import OpenAIChatCompat
 from lm15.errors import detail_message
 from lm15.router import openai_chat_model_string
 from lm15.testing import FakeResponse, FakeTransport
-from lm15.types import Reasoning, TextPart
+from lm15.types import Reasoning, TextDelta, TextPart
 
 CHECKPOINT = "tinker://e68146d2-1a2e-56e8-b42f-1f5957705501:train:0/sampler_weights/lm15-untrained"
 
@@ -194,6 +194,31 @@ def test_other_providers_keep_the_stop_sequence_rule():
     lm = OpenAIChatLM(api_key="k", compat="openai",
                       transport=FakeTransport([FakeResponse(status=200, body=_chat_reply("a END b"))]))
     assert lm.complete(ask("gpt-4.1-mini", stop=("END",))).text == "a END b"  # never cut where the server's own rule holds
+
+
+@pytest.mark.parametrize("model, expected", [
+    ("custom", "before "), ("openai-chat:custom", "before "), ("openai-chat:control", "before STOP"),
+])
+@pytest.mark.parametrize("streaming", [False, True])
+def test_model_stop_policy_matches_prefixed_and_unprefixed_calls(model, expected, streaming):
+    frames = [{"choices": [{"index": 0, "delta": {"content": "before STOP"}, "finish_reason": None}]},
+              {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+               "usage": {"prompt_tokens": 5, "completion_tokens": 7, "total_tokens": 12}}]
+    sse = b"".join(b"data: " + json.dumps(frame).encode() + b"\n\n" for frame in frames)
+    reply = FakeResponse(200, sse, chunks=[sse]) if streaming else FakeResponse(200, _chat_reply("before STOP"))
+    transport = FakeTransport([reply])
+    lm = OpenAIChatLM(api_key="k", transport=transport,
+                     compat=OpenAIChatCompat(model_overrides=(("custom", {"stop_in_text": "included"}),)))
+    request = ask(model, stop=("STOP",))
+    if streaming:
+        events = list(lm.stream(request))
+        text = "".join(e.delta.text for e in events if e.type == "delta" and isinstance(e.delta, TextDelta))
+        usage = next(e.usage for e in events if e.type == "end")
+    else:
+        response = lm.complete(request)
+        text, usage = response.text, response.usage
+    assert text == expected and usage.total_tokens == 12
+    assert json.loads(transport.requests[0].body)["model"] == model.removeprefix("openai-chat:")
 
 
 # ─── errors: FastAPI's {"detail": ...} (MAP-21) and the MAP-15 forms ──
