@@ -1,0 +1,271 @@
+# Temporary DSPy integration patches
+
+## Current integration: v2.4.0
+
+Release `v2.4.0`: `1ae98203f643059f0c103933c80ab0e7f68c5f26`.
+Contract: `f67699cb14964e8cd5aacfe774a306f1a1b198c7`.
+Branches: `integration/lm15-2.4.0-patches` and
+`fix/managed-request-snapshots-2.4.0`. The integration tip also includes
+this record; package runtime ends at patch 14 below.
+
+Ordered patches (motivations and original identities retained below):
+
+1. `07219bd19b649fa7c4a5ecfd37619025ac99d8f5`
+2. `c101ad2c307c836c4bf8fb71d4f311a8a8f025f6`
+3. `b178b2ce3e314d8cf9e8a5074aca74dc1cdd59d5`
+4. `2cad9bc64722e8197ad02ba7efd4a8f2735eb649`
+5. `a1654a3ffe873fc023e450f8856b967b2bc3cfac`
+6. `1643a5fbb0bd2be635f6487bcf200d13dec842cd`
+7. `db2841454862082b044a7e6f84de0c7d23347443`
+8. `af4036c6fd900a426c917b16f8723d892a2012c2`
+9. `2ddde3dadc0272aa5bf6985405d6cc42f25f0fba`
+10. `26d2caa961eb307843559f530b89aca696c40dfd`
+11. `fcdb510308cc2a1d21b1abb02031d5d28644d742`
+12. `ebbdc3a7343a81e31af9ebc20e6f09ce224043a9`
+13. `80e7ce251577207f915a4c82acdea50afbb58d23`
+14. `8a473261cb01dbaab7a2424b31ff44ac1de40fb2`
+
+Retirement audit: all fourteen retained. The complete upstream runtime delta
+is the version and cloud/chains.py: AWS-sourced Google external_account
+acquisition, validation and deterministic token vectors. No patched runtime
+file changes upstream, and the new acquisition does not replace managed
+operation admission, bound-account selection, login lifetime/error handling,
+descriptor exports, parsing/accounting, cache boundaries or stop-policy
+selection. The patched-package delta from the previous integration is exactly
+the upstream package delta. No semantic/textual conflict or additional patch
+is needed. Patch 10 stays narrowed; do not restore the cloud-settings hunk
+already resolved upstream in 1.4.1.
+
+Validation: 4,043 source tests passed, 9 skipped, with only the two approved
+reserved-IP connect-timeout orb failures. This includes all retained patch
+regressions and new AWS federation tests. Strict conformance, every pinned
+contract-harness direction, generated signatures and types pass (32 programs,
+390 baseline package findings, zero new). Exact-release upstream run
+43294153384 passes all jobs; tag run 43299057629 has two cancelled macOS jobs,
+not assertion failures, and its remaining tests/contract/types pass.
+
+The contract amendment is awaiting upstream ratification. ECS/container
+credential precedence is an intentional addition over google-auth; AWS
+profiles and web identity are not added as sources. No local live-provider
+validation is claimed. Upstream contribution branches remain published;
+submission has previously been denied by integration permissions. No patch
+is claimed submitted or merged without a confirmed PR.
+
+## Historical v2.3.1 audit and patch motivations
+
+Upstream release: lm15 v2.3.1 at
+`f114d33d811147e561e74bb5425364c7eaffee7a`.
+Contract pin: `81b519fe2a3124d5ddf969017b26c8df1f38245d`.
+
+Replay these commits in order on a newer eligible release, omitting a patch
+only when its regression is covered by the upstream release. Keep fork main
+unpatched and do not rewrite published integration branches.
+
+The v2.3.1 replay retains all twelve patches in the same order and adds two
+review fixes for defects reproduced on that release:
+
+1. `28ac4ccc00d1c3e5e0d581bcccec7c3f0c49d287`
+2. `4d189d8fa9f21e4a53c09a8efe059d6588cbbdc8`
+3. `c98171dc370a5101b4dccfc0ccae27a32901f0fc`
+4. `02b5a3b75b7e112b16456f8b74393fa3a88ec144`
+5. `426ace8b2c68a2f29f33a00e34927cf3ce10ac68`
+6. `477a39a19773461c1803529d063caee6aceaa9ad`
+7. `ce85e5f33b7576e06ddc7c8e605932881972c908`
+8. `479f7fb0f3c928ed39c77e4251b72bed8dd379af`
+9. `910ecc0716c89628243d9fa77670f468a4fca303`
+10. `ff987286b5b3af2937136c68acc7aa26673d4a85`
+11. `a83176d325ab828924284c1d9662bd8a5f1e70b0`
+12. `d0859dee1e67ed7c06a349ab2bed83f43ad0ac2b`
+13. `b824197ac84a983a6fde7c43ac817afee1e2b206`
+14. `a253471cda9b1a2ce6853dda40c228f3d2b4d4b2`
+
+Patch-retirement audit: upstream adds Tinker routing, stop-sequence cutting,
+FastAPI errors, empty-part filtering and assistant DataPart history replay.
+None substitutes for a retained fix. Overlapping files in patches 3, 11 and 12
+compose without textual conflicts: preserve URI guards, base_models in captured
+execution settings, stop readers and the new parse_response wrapper. Reviewed
+the actual combined diff, not only cherry-pick success. Copied public regression
+files on pristine 2.3.1 produced 64 failures and 62 passes. These and source review
+retain patches 1, 2, 3, 5, 6, 7, 10 and 12. Patch 11's original file cannot
+collect on pristine because it imports a downstream helper; an independent
+public Chat/Responses complete() probe with patch 11's runtime removed instead
+reproduced missing billed usage on both dialects (None before, 22 tokens after).
+
+Companion patches were tested with their prerequisite stack: after patch 3,
+both replacement-transport cases fail without patch 4. After patch 7, the
+post-approval expiry case fails without patch 8, and four route-admission cases
+fail without patch 9. Removing patch 9's runtime while keeping the later tests
+also fails both single-worker cancellation cases. All 248 focused patch,
+Tinker and empty-history tests pass with the full stack. Patch 10 omits the old
+cloud-settings runtime hunk already solved upstream in 1.4.1. No patch was
+retired or replaced in 2.3.1; clean cherry-picks alone were not the evidence.
+
+Exact-release upstream CI 42948973462 and tag CI 42950548935 pass. Strict
+conformance, the pinned harness and types pass (32 user programs, zero new
+findings). After the review fixes, full source suite: 4,034 passed, 9 skipped, with only the two
+approved reserved-IP connect-timeout orb exceptions. The stack is on
+integration/lm15-2.3.1-patches and the separate
+contribution branch fix/managed-request-snapshots-2.3.1. Prior stacks and the
+standalone fix/stream-final-json-types-2.1.0 contribution remain intact.
+
+13. Select explicit OpenAI cache boundaries after excluding empty text
+    parts. Greptile on DSPy #10872 found that MAP-24 filtering made both
+    Chat and Responses abort on user("") at prefix_until_index. Eight new
+    source cases fail before and pass after, including no earlier eligible
+    prefix and a final image followed by empty text. Four whitespace and
+    trailing-real-text controls pass both times. Public build_request/plan
+    tests live in tests/test_prompt_cache_breakpoint.py. The boundary moves
+    backward or is dropped with the existing adaptation; the question is
+    never included. DSPy's public sync/async LM probe also fails all eight
+    cases before import. Prepared with patch 14 for a standalone upstream
+    contribution on fix/empty-cache-and-prefixed-stop-2.3.1; submission is
+    not claimed successful until upstream grants access.
+
+14. Resolve Chat stop policy against the same normalized wire model as the
+    writer. Greptile on DSPy #10872 found that a direct adapter call with
+    openai-chat:custom missed the custom model_overrides entry on reply
+    parsing. Complete and stream both reproduce the retained STOP text
+    before the fix; bare-name and unaffected-model controls pass both
+    times. tests/test_tinker.py checks text, normalized wire model and all
+    12 billed tokens, including usage after the streaming stop. The public
+    DSPy facade exposes this adapter; ordinary routed LMs already normalize
+    the model before dispatch. The combined cache/Tinker source suite is
+    70 passed after both fixes (10 failed, 60 passed before).
+
+12. Distinguish JSON booleans from numbers when comparing argument fragments
+    with their final copy (MAP-20). Python treats true == 1 and false == 0;
+    the stream previously accepted these contradictory tool inputs. The
+    existing public stream-reader regression now fails both scalar/nested
+    contradictions before the fix, with other cases passing. Tag numeric
+    values and compare with Decimal so 1 and 1.0 still agree, without float
+    rounding. Ordered objects and whitespace/escape equivalence remain.
+    Tests live in tests/test_stream_final_copy.py. Prepared for a separate
+    upstream contribution on fix/stream-final-json-types-2.1.0; not claimed
+    submitted until upstream access succeeds.
+
+The following numbered motivations retain their v1.5.0 and original commit
+identities for traceability; each corresponds to the same replay number above.
+
+11. `c4686f8343a1f0c47e33141ab114877d4f6b723b`: preserve billed usage on
+    nonstream OpenAI Chat/Responses parsing failures. Added to DSPy's 1.5.0
+    snapshot on October23; dropping it loses usage when a reply contains an
+    unnamed tool call. Tests/test_complete_partial_usage.py covers sync/async
+    error accounting, malformed telemetry, missing and inconsistent totals,
+    successful controls, and separate reasoning. The replay uses 2.0's
+    canonical unknown-counter semantics instead of constructing invalid Usage.
+    This patch remains downstream pending upstream contribution access.
+
+1. `cc8a5b20763718faf4a70a1f8c5bd902eccb7827` (original `bf96a4fe32edfa72125a2f9c2ee7ea0cc206c655`):
+   enforce the selected model for keyword requests as well as explicit Request
+   values. Otherwise a bound client can silently request a different model.
+   The regression in tests/test_login.py verifies matching spellings and
+   rejection before dispatch for request, plan, complete and stream.
+2. `b0f32a1cb566c9cf0559051e66333fa3115e5f7e` (original `3a5cac83983aa462841f32a7f9842a085ac052ef`):
+   classify renewal HTTP 429 as RateLimitError rather than LoginDenied. A
+   temporary rate limit must not delete saved credentials. The regression in
+   tests/test_login.py checks preserved credentials/revision, cleared in-flight
+   state, no automatic retry and a successful later renewal.
+3. `2f0d9b7fe7158778b4a3edc1a3087b13142bb29d` (original `dd0662c866dfd208ffed443f071e10123170ef0e`):
+   keep credentials, account headers and endpoints in one per-operation
+   snapshot. Retained adapters acquire the active connection for each
+   operation; bound clients retain their selected identity. Dispatch checks
+   the snapshot's generation before every transport handoff, including delayed
+   streams and multi-wire operations. Renewal cannot silently change a known
+   account ID. Regression coverage in tests/test_managed_dispatch.py includes
+   sync/async replacement, renewal, logout races, batch upload/submit, explicit
+   endpoints and offline planning.
+4. `dfb1e390073fbb6a2ff668996f9d2bb7e394dd0a` (original `046f2bfa5c12b55c6a199f388879e5d689397a87`):
+   preserve the retained adapter's transport and adaptation policy when
+   preparing an operation. Sync/async regressions verify the documented
+   transport replacement escape hatch sends only through the caller's
+   replacement transport.
+5. `37ebcfbc66899e18633663034bd27788ed8f8c5f` (original `8671868feb55408c2a11bbea2413f9a7d70ebe9b`): expose the descriptor
+   collection as `lm15.login_providers` (also `lm15.login.providers`).
+   The attempted lazy `providers` export was hidden by the existing provider
+   implementation package. Keep that package and its submodules intact.
+   Fresh-interpreter import-order regressions live in tests/test_login_exports.py.
+6. `89df856db40f0a4f2b9926e20b7184f21de6033b` (original `cd7ef071d0399af28b0e88a71bfd11f97a859cb8`): wait for dismissed terminal
+   manual input to relinquish stdin before returning to a subsequent picker.
+   The existing "press Enter to continue" interaction remains; no portable
+   cancellation of blocking input is assumed. Tests/test_terminal_login.py
+   covers a real loopback callback with controlled input, early dismissal,
+   completed reads and interrupted reads.
+7. `ff3f297ed5795f02d203c32bf1e26c204bfa4d71` (original `a838f91648c844416d75697273c38646caddec8f`): resolve sibling routes to
+   their advertised saved connection for requests, renewal, status and
+   logout; explicit route slots (including logout markers) take precedence.
+   Async task cancellation signals and durably releases only its own login
+   attempt before returning CancelledError. A commit already won is not
+   undone. Verification pins the checked connection and records results
+   only if its identity/generation still matches. Tests/test_login.py covers
+   all three Meta routes with remint/endpoint change/logout, cooperative and
+   non-cooperative cancelled login workers, and valid/rejected verification
+   with and without concurrent replacement.
+8. `07816eca2bda2d7ee149266b48a92c430377293c` (original `c9d45beb2744835a79bc46ea7aa8d2e209f9139e`): keep the post-approval
+   cancellation/deadline check inside the existing typed-error boundary.
+   Self-review of patch 7 reproduced a raw LoginExpired escaping if approval
+   finished after the deadline. The public regression in tests/test_login.py
+   now gets AuthOperationError(reason="login_expired"), persists no credential,
+   and can start a new login immediately. This patch is downstream only.
+9. `d8dab6150caf86e0328385c89475d8255ac3fd88` (original `dd900d292a393c6c04fab7d1c57248dfee25e90b`): preserve the originally
+   requested route through renewal and re-resolve it at dispatch admission.
+   A newly saved or signed-out route-specific slot must supersede the shared
+   owner even for an already prepared request. Run durable async login
+   cancellation on an independent executor so a blocked login cannot occupy
+   the only worker available to release its reservation. The second Greptile
+   review reproduced both races. Four sync/async route replacement/logout
+   cases and two one-worker cancellation cases fail before and pass after.
+   Cancellation frees the reservation before the login worker is released;
+   it does not interrupt blocking terminal input or undo a completed commit.
+   These fixes are downstream only, pending upstream contribution access.
+10. `d2c73eb1e5099f9ddd53e638ccd8071a907d55f3` (original `359f90953dd90089c306ceb5a69fe10bbb14c483`): preserve the selected account.
+    Bound clients and saved-account model listing
+    discard config identity overrides while retaining execution settings;
+    ordinary routers keep their explicit-identity precedence. The original
+    cloud-settings runtime hunk is omitted: upstream PR #21, released in
+    v1.4.1, now owns it. Retain the public sync/async replacement regressions
+    to verify that upstream settings resolution composes with patch 3.
+    The October 15 Greptile review reproduced wrong-account dispatch and
+    ignored project/region selection. Ten public-operation cases fail before
+    and pass after, covering catalog/inference keys, named cloud identities,
+    logout/replacement, absent/conflicting ambient settings and partial
+    explicit overrides. Tests live in tests/test_login.py and
+    tests/test_managed_dispatch.py. This patch is downstream only, pending
+    upstream contribution access.
+
+During the v1.5.0 replay, the first nine patches remained necessary. Conflicts preserved
+upstream's measurable-judgment filtering, bounding_box export and typed
+Connection declaration alongside our snapshot and descriptor fixes. Patch 10
+now changes only bound identity selection plus regressions; it has no router
+runtime diff. All retained regression tests pass, including eight cloud
+settings/replacement cases using the upstream implementation.
+Meta login remains unverified and requires explicit opt-in because of the
+documented terms and data-use risks.
+
+Patches 5–7 address five reproduced findings from DSPy #10540's October 13
+Greptile review. The focused before/after run failed 14 cases on the previous
+tip (with 3 controls passing); all pass after the fixes. These new patches
+are downstream only and are published on the integration and contribution
+branches below, not claimed submitted or merged upstream.
+
+The first two fixes originate on cmpnd-ai/lm15-python branch
+fix/managed-auth-review. The routing fixes are published on
+fix/managed-request-snapshots, with the 1.3.0 stack and review fixes on
+fix/managed-request-snapshots-1.3.0 and integration/lm15-1.3.0-patches.
+The v1.5.0 replay is on fix/managed-request-snapshots-1.5.0 and
+integration/lm15-1.5.0-patches; prior branches remain unchanged.
+Upstream PR submission was denied by GitHub
+integration permissions; no patch is claimed to be merged upstream. Check
+for an existing upstream PR before attempting submission again.
+
+Managed websocket operations and raw request builders that bypass operation
+preparation fail closed; explicit/unmanaged credentials retain their existing
+behavior. No shared adapter fields are mutated during requests. A snapshot
+admitted before logout may still reach the transport: logout cannot recall an
+already admitted request.
+
+Full source tests, strict conformance, the exact pinned contract harness,
+type checks and DSPy integration tests must pass on every changed stack before
+import. The only approved orb exceptions are the sync/async reserved-IP
+connect-timeout tests, with passing exact-release upstream CI. Do not infer
+that passing existing contract tests alone demonstrates the race regressions.
+No live provider calls are needed.
